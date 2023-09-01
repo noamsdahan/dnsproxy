@@ -4,7 +4,9 @@ package proxy
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"github.com/cbergoon/merkletree"
 	"io"
 	"net"
 	"net/http"
@@ -26,10 +28,20 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
+var dnsRequestsBuffer []merkletree.Content
+var requestCounter int
+var aggregationStartTime time.Time
+
 const (
-	defaultTimeout   = 10 * time.Second
-	minDNSPacketSize = 12 + 5
+	defaultTimeout        = 10 * time.Second
+	minDNSPacketSize      = 12 + 5
+	aggregationTimeWindow = 5 * time.Second // e.g., 10 seconds
+	maxRequests           = 1024
 )
+
+type DNSRequestContent struct {
+	query string
+}
 
 // Proto is the DNS protocol.
 type Proto string
@@ -574,6 +586,34 @@ func (p *Proxy) Resolve(dctx *DNSContext) (err error) {
 		dctx.processECS(p.EDNSAddr)
 	}
 
+	// Aggregate the DNS request
+	dnsRequest := DNSRequestContent{query: dctx.Req.Question[0].Name}
+	dnsRequestsBuffer = append(dnsRequestsBuffer, dnsRequest)
+	requestCounter++
+
+	// If this is the first request in our window, set the start time
+	if requestCounter == 1 {
+		aggregationStartTime = time.Now()
+	}
+
+	timeElapsed := time.Since(aggregationStartTime)
+
+	// If we've reached the max number of requests or the time window has passed, process the requests
+	if requestCounter >= maxRequests || timeElapsed >= aggregationTimeWindow {
+		tree, err := merkletree.NewTree(dnsRequestsBuffer)
+		if err != nil {
+			return err // Handle the error appropriately
+		}
+
+		merkleRoot := tree.MerkleRoot()
+		log.Println("Merkle Root:", merkleRoot) // You can send this to the ANS
+
+		// Reset the counter, buffer, and start time
+		requestCounter = 0
+		dnsRequestsBuffer = []merkletree.Content{}
+		aggregationStartTime = time.Time{}
+	}
+
 	dctx.calcFlagsAndSize()
 
 	// Use cache only if it's enabled and the query doesn't use custom upstream.
@@ -682,4 +722,22 @@ func (p *Proxy) newDNSContext(proto Proto, req *dns.Msg) (d *DNSContext) {
 
 		RequestID: atomic.AddUint64(&p.counter, 1),
 	}
+}
+
+// CalculateHash hashes the DNSRequestContent
+func (d DNSRequestContent) CalculateHash() ([]byte, error) {
+	h := sha256.New()
+	if _, err := h.Write([]byte(d.query)); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
+}
+
+// Equals checks if the DNSRequestContent is equal to another DNSRequestContent
+func (d DNSRequestContent) Equals(other merkletree.Content) (bool, error) {
+	otherDNS, ok := other.(DNSRequestContent)
+	if !ok {
+		return false, errors.New("value is not of type DNSRequestContent")
+	}
+	return d.query == otherDNS.query, nil
 }

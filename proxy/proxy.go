@@ -598,6 +598,10 @@ func (p *Proxy) Resolve(dctx *DNSContext) (err error) {
 
 	timeElapsed := time.Since(aggregationStartTime)
 
+	requestCounterLog := fmt.Sprintf("Request Counter: %d", requestCounter)
+	timeElapsedLog := fmt.Sprintf("Time Elapsed: %s", timeElapsed)
+	log.Info(requestCounterLog)
+	log.Info(timeElapsedLog)
 	// If we've reached the max number of requests or the time window has passed, process the requests
 	if requestCounter >= maxRequests || timeElapsed >= aggregationTimeWindow {
 		tree, err := merkletree.NewTree(dnsRequestsBuffer)
@@ -606,8 +610,9 @@ func (p *Proxy) Resolve(dctx *DNSContext) (err error) {
 		}
 
 		merkleRoot := tree.MerkleRoot()
-		log.Println("Merkle Root:", merkleRoot) // You can send this to the ANS
-
+		log_msg := fmt.Sprintf("Merkle Root: %s", merkleRoot)
+		log.Println(log_msg) // You can send this to the ANS
+		log.Info(log_msg)
 		// Reset the counter, buffer, and start time
 		requestCounter = 0
 		dnsRequestsBuffer = []merkletree.Content{}

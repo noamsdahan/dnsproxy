@@ -270,7 +270,7 @@ func run(options *Options) {
 	}
 
 	dnsProxy.ResponseHandler = pocResponseHandler
-
+	StartBatchingProcess()
 	// Start the proxy server.
 	err := dnsProxy.Start()
 	if err != nil {
@@ -704,12 +704,12 @@ var batchedRequestsCh = make(chan *proxy.DNSContext, 100) // A buffered channel 
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedRequests = &BatchedRequests{
-	requests: make([]*proxy.DNSContext, 0, 100), // initial capacity for better performance, adjust as needed
+	requests: make([]*proxy.DNSContext, 0, 100), // initial capacity for better performance
 }
 
 func StartBatchingProcess() {
 	go func() {
-		log.Info("[BATCH_PROCESS] Starting batching process...")
+		log.Println("[BATCH_PROCESS] Starting batching process...")
 		for {
 			request := <-batchedRequestsCh
 
@@ -718,13 +718,13 @@ func StartBatchingProcess() {
 
 			if batchTimer == nil {
 				// Start the timer for 80ms
-				log.Info("[BATCH_PROCESS] Starting timer for 80ms...")
+				log.Println("[BATCH_PROCESS] Starting timer for 80ms...")
 				batchTimer = time.AfterFunc(80*time.Millisecond, processBatch)
 			}
 
 			// Add the request to the batch
 			batchedRequests.requests = append(batchedRequests.requests, request)
-			log.Info("[BATCH_PROCESS] Added request to batch. Total requests in batch: %d", len(batchedRequests.requests))
+			log.Printf("[BATCH_PROCESS] Added request to batch. Total requests in batch: %d\n", len(batchedRequests.requests))
 
 			processingBatch.Unlock()
 		}
@@ -732,22 +732,23 @@ func StartBatchingProcess() {
 }
 
 func pocResponseHandler(d *proxy.DNSContext, err error) {
-	log.Info("[BATCH_PROCESS] pocResponseHandler called for %s", d.Req.Question[0].Name)
+	log.Printf("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
 	batchedRequestsCh <- d
-	log.Info("[BATCH_PROCESS] Added request to batch channel.")
+	log.Println("[BATCH_PROCESS] Added request to batch channel.")
 }
 
 func processBatch() {
 	processingBatch.Lock()
 	defer processingBatch.Unlock()
 
-	log.Info("[BATCH_PROCESS] Processing batch...")
+	numRequests := len(batchedRequests.requests)
+	log.Printf("[BATCH_PROCESS] Timer triggered. Processing batch of %d requests...\n", numRequests)
 
-	// Here, you can process batchedRequests.requests as one batch
-	// ...
+	// Simulated processing: just logging the number of messages in the batch.
+	for _, request := range batchedRequests.requests {
+		log.Printf("[BATCH_PROCESS] Processing request: %s\n", request.Req.Question[0].Name)
+	}
 
-	// Reset the timer and batched requests
-	log.Info("[BATCH_PROCESS] Finished processing batch. Resetting timer and clearing batch.")
-	batchTimer = nil
-	batchedRequests.requests = nil
+	log.Println("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
+	batchedRequests.requests = make([]*proxy.DNSContext, 0, 100) // re-initialize the slice with initial capacity
 }

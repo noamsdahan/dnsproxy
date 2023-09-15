@@ -770,4 +770,5 @@ func processBatch() {
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
 	batchedRequests.requests = make([]WaitingRequest, 0, 100) // re-initialize the slice with initial capacity
+	batchTimer = nil
 }

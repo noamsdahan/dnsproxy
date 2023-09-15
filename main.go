@@ -696,22 +696,27 @@ func loadServersList(sources []string) []string {
 	return servers
 }
 
-type BatchedRequests struct {
-	requests []*proxy.DNSContext
+type WaitingRequest struct {
+	request  *proxy.DNSContext
+	notifyCh chan int
 }
 
-var batchedRequestsCh = make(chan *proxy.DNSContext, 100) // A buffered channel for simplicity
+type BatchedRequests struct {
+	requests []WaitingRequest
+}
+
+var batchedRequestsCh = make(chan WaitingRequest, 100) // A buffered channel for simplicity
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedRequests = &BatchedRequests{
-	requests: make([]*proxy.DNSContext, 0, 100), // initial capacity for better performance
+	requests: make([]WaitingRequest, 0, 100), // initial capacity for better performance
 }
 
 func StartBatchingProcess() {
 	go func() {
 		log.Println("[BATCH_PROCESS] Starting batching process...")
 		for {
-			request := <-batchedRequestsCh
+			waitingReq := <-batchedRequestsCh
 
 			// Lock to ensure only one batch is processed at a time
 			processingBatch.Lock()
@@ -723,7 +728,7 @@ func StartBatchingProcess() {
 			}
 
 			// Add the request to the batch
-			batchedRequests.requests = append(batchedRequests.requests, request)
+			batchedRequests.requests = append(batchedRequests.requests, waitingReq)
 			log.Printf("[BATCH_PROCESS] Added request to batch. Total requests in batch: %d\n", len(batchedRequests.requests))
 
 			processingBatch.Unlock()
@@ -733,8 +738,16 @@ func StartBatchingProcess() {
 
 func pocResponseHandler(d *proxy.DNSContext, err error) {
 	log.Printf("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
-	batchedRequestsCh <- d
-	log.Println("[BATCH_PROCESS] Added request to batch channel.")
+
+	waitingReq := WaitingRequest{
+		request:  d,
+		notifyCh: make(chan int),
+	}
+	batchedRequestsCh <- waitingReq
+
+	batchSize := <-waitingReq.notifyCh // Block until we have the batch size
+	log.Printf("[BATCH_PROCESS] This batch had a size of: %d\n", batchSize)
+	// TODO: Use batchSize to update the response. Replace this comment with your response updating logic.
 }
 
 func processBatch() {
@@ -745,12 +758,16 @@ func processBatch() {
 	log.Printf("[BATCH_PROCESS] Timer triggered. Processing batch of %d requests...\n", numRequests)
 
 	// Simulated processing: just logging the number of messages in the batch.
-	for _, request := range batchedRequests.requests {
-		log.Printf("[BATCH_PROCESS] Processing request: %s\n", request.Req.Question[0].Name)
+	for _, waitingReq := range batchedRequests.requests {
+		log.Printf("[BATCH_PROCESS] Processing request: %s\n", waitingReq.request.Req.Question[0].Name)
+	}
+
+	// Notify all waiting requests of the batch size
+	for _, waitingReq := range batchedRequests.requests {
+		waitingReq.notifyCh <- len(batchedRequests.requests)
+		close(waitingReq.notifyCh)
 	}
 
 	log.Println("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	batchedRequests.requests = make([]*proxy.DNSContext, 0, 100) // re-initialize the slice with initial capacity
-
-	batchTimer = nil // Reset the timer to nil after processing the batch
+	batchedRequests.requests = make([]WaitingRequest, 0, 100) // re-initialize the slice with initial capacity
 }

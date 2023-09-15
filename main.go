@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -267,6 +268,8 @@ func run(options *Options) {
 		ipv6Configuration := ipv6Configuration{ipv6Disabled: options.IPv6Disabled}
 		dnsProxy.RequestHandler = ipv6Configuration.handleDNSRequest
 	}
+
+	dnsProxy.ResponseHandler = pocResponseHandler
 
 	// Start the proxy server.
 	err := dnsProxy.Start()
@@ -691,4 +694,60 @@ func loadServersList(sources []string) []string {
 	}
 
 	return servers
+}
+
+type BatchedRequests struct {
+	requests []*proxy.DNSContext
+}
+
+var batchedRequestsCh = make(chan *proxy.DNSContext, 100) // A buffered channel for simplicity
+var processingBatch sync.Mutex
+var batchTimer *time.Timer
+var batchedRequests = &BatchedRequests{
+	requests: make([]*proxy.DNSContext, 0, 100), // initial capacity for better performance, adjust as needed
+}
+
+func StartBatchingProcess() {
+	go func() {
+		log.Info("[BATCH_PROCESS] Starting batching process...")
+		for {
+			request := <-batchedRequestsCh
+
+			// Lock to ensure only one batch is processed at a time
+			processingBatch.Lock()
+
+			if batchTimer == nil {
+				// Start the timer for 80ms
+				log.Info("[BATCH_PROCESS] Starting timer for 80ms...")
+				batchTimer = time.AfterFunc(80*time.Millisecond, processBatch)
+			}
+
+			// Add the request to the batch
+			batchedRequests.requests = append(batchedRequests.requests, request)
+			log.Info("[BATCH_PROCESS] Added request to batch. Total requests in batch: %d", len(batchedRequests.requests))
+
+			processingBatch.Unlock()
+		}
+	}()
+}
+
+func pocResponseHandler(d *proxy.DNSContext, err error) {
+	log.Info("[BATCH_PROCESS] pocResponseHandler called for %s", d.Req.Question[0].Name)
+	batchedRequestsCh <- d
+	log.Info("[BATCH_PROCESS] Added request to batch channel.")
+}
+
+func processBatch() {
+	processingBatch.Lock()
+	defer processingBatch.Unlock()
+
+	log.Info("[BATCH_PROCESS] Processing batch...")
+
+	// Here, you can process batchedRequests.requests as one batch
+	// ...
+
+	// Reset the timer and batched requests
+	log.Info("[BATCH_PROCESS] Finished processing batch. Resetting timer and clearing batch.")
+	batchTimer = nil
+	batchedRequests.requests = nil
 }

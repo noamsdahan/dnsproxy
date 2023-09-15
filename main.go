@@ -751,4 +751,6 @@ func processBatch() {
 
 	log.Println("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
 	batchedRequests.requests = make([]*proxy.DNSContext, 0, 100) // re-initialize the slice with initial capacity
+
+	batchTimer = nil // Reset the timer to nil after processing the batch
 }

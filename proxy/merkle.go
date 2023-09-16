@@ -222,7 +222,10 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 		log.Error("Error in DNS response: %s", err)
 		return
 	}
-
+	// log the request
+	log.Debug("[MerkleRR]: Request: %s", d.Req.String())
+	// log the response
+	log.Debug("[MerkleRR]: Response: %s", d.Res.String())
 	// Extract the Merkle root, signature, and serialized proof from TXT records
 	knownRootHash, signature, merkleProofSerialized, err := extractTXTData(d.Res.Extra)
 	if err != nil {

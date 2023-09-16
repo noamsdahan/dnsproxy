@@ -446,6 +446,8 @@ func verifyMerklePath(dctx *DNSContext, merklePath [][]byte, indexes []int64, kn
 	isEqual := bytes.Equal(currentHash, knownRootHash)
 	if !isEqual {
 		log.Error("Merkle verification mismatch. Expected root hash: %x, Calculated hash: %x", knownRootHash, currentHash)
+	} else {
+		log.Debug("Merkle verification successful. Expected root hash: %x, Calculated hash: %x", knownRootHash, currentHash)
 	}
 	return isEqual, nil
 }

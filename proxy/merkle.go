@@ -459,6 +459,12 @@ type ECDSASignature struct {
 }
 
 func createSignature(hash []byte) ([]byte, error) {
+	// check to ensure that the private key is not nil
+	if privateKey == nil {
+		// if it is, log error and panic
+		log.Error("Private key is nil")
+		panic("Private key is nil")
+	}
 	// Sign the data
 	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hash[:])
 	if err != nil {

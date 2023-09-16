@@ -451,25 +451,32 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 		log.Printf("Error reading public key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "EC PUBLIC KEY" {
-		log.Printf("Failed to decode PEM block containing public key from '%s'", filename)
-		return nil, errors.New("Failed to decode PEM block containing public key")
+
+	var block *pem.Block
+	for {
+		block, pemBytes = pem.Decode(pemBytes)
+		if block == nil {
+			break
+		}
+		if block.Type == "EC PUBLIC KEY" {
+			pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				log.Printf("Error parsing PKIX public key from '%s'. Error: %v", filename, err)
+				return nil, err
+			}
+
+			publicKey, ok := pubInterface.(*ecdsa.PublicKey)
+			if !ok {
+				log.Printf("Failed to assert public key from '%s' as ECDSA public key", filename)
+				return nil, errors.New("Failed to assert as ECDSA public key")
+			}
+
+			return publicKey, nil
+		}
 	}
 
-	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		log.Printf("Error parsing PKIX public key from '%s'. Error: %v", filename, err)
-		return nil, err
-	}
-
-	publicKey, ok := pubInterface.(*ecdsa.PublicKey)
-	if !ok {
-		log.Printf("Failed to assert public key from '%s' as ECDSA public key", filename)
-		return nil, errors.New("Failed to assert as ECDSA public key")
-	}
-
-	return publicKey, nil
+	log.Printf("Failed to decode PEM block containing public key from '%s'", filename)
+	return nil, errors.New("Failed to decode PEM block containing public key")
 }
 
 type ECDSASignature struct {

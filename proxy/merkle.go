@@ -22,6 +22,10 @@ import (
 	"time"
 )
 
+type ECDSASignature struct {
+	R, S *big.Int
+}
+
 type WaitingResponse struct {
 	response *DNSContext
 	notifyCh chan int
@@ -42,7 +46,7 @@ var batchedResponses = &BatchedRequests{
 	responses: make([]WaitingResponse, 0, batchRequestChanSize), // initial capacity for better performance
 }
 
-const batchRequestChanSize = 256
+const batchRequestChanSize = 128
 const txtRecordTTL = 60
 const NotificationProcessed = 0
 
@@ -166,6 +170,15 @@ func processBatch() {
 			log.Error("error serializing merkle path and indexes: %s", err)
 			continue
 		}
+		debugVerificationTest := true
+		if debugVerificationTest {
+			// Verify if the content is present using the extracted path.
+			ok, err := verifyMerklePath(waitingReq.response, path, indexes, merkleRootHash, sha256.New)
+			if err != nil || !ok {
+				log.Error("Error or mismatch in Merkle verification: %s", err)
+				continue
+			}
+		}
 		// encode the merkle root hash and signature to base64
 		merkleRootHashBase64 := base64.StdEncoding.EncodeToString(merkleRootHash)
 		merkleSignatureBase64 := base64.StdEncoding.EncodeToString(merkleSignature)
@@ -197,140 +210,6 @@ func processBatch() {
 	batchTimer = nil
 }
 
-// CalculateHash computes the hash of the DNSContext.
-// It hashes the serialized representation of both the request and the response.
-func (dctx *DNSContext) CalculateHash() ([]byte, error) {
-	h := sha256.New()
-
-	// Serialize and hash the request
-	reqBytes, err := dctx.Req.Pack()
-	if err != nil {
-		return nil, err
-	}
-	_, err = h.Write(reqBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	// Serialize and hash the response
-	resBytes, err := dctx.Res.Pack()
-	if err != nil {
-		return nil, err
-	}
-	_, err = h.Write(resBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return h.Sum(nil), nil
-}
-
-// Equals checks if two DNSContexts are equivalent.
-// This function checks equality based on the serialized representations of the DNS messages.
-func (dctx *DNSContext) Equals(other merkletree.Content) (bool, error) {
-	otherContent, ok := other.(*DNSContext)
-	if !ok {
-		return false, errors.New("value is not of type DNSContext")
-	}
-
-	dReqBytes, err := dctx.Req.Pack()
-	if err != nil {
-		return false, err
-	}
-
-	otherReqBytes, err := otherContent.Req.Pack()
-	if err != nil {
-		return false, err
-	}
-
-	if !bytes.Equal(dReqBytes, otherReqBytes) {
-		return false, nil
-	}
-
-	dResBytes, err := dctx.Res.Pack()
-	if err != nil {
-		return false, err
-	}
-
-	otherResBytes, err := otherContent.Res.Pack()
-	if err != nil {
-		return false, err
-	}
-
-	return bytes.Equal(dResBytes, otherResBytes), nil
-}
-
-//type BatchedResponse struct {
-//	Responses  []*DNSContext
-//	MerklePath [][]byte // Added MerklePath field
-//	LeafIndex  []int64  // Added LeafIndex field
-//}
-
-func (dctx DNSContext) Serialize() ([]byte, error) {
-	// Convert the DNSContext (or parts of it) to a byte slice.
-	// For simplicity, let's just serialize the DNS messages. You can expand on this.
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-
-	if err := encoder.Encode(dctx.Req); err != nil {
-		return nil, err
-	}
-	if err := encoder.Encode(dctx.Res); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
-// New function to serialize Merkle path and indexes
-func serializePathAndIndexes(path [][]byte, indexes []int64) (string, error) {
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-
-	if err := encoder.Encode(path); err != nil {
-		return "", err
-	}
-	if err := encoder.Encode(indexes); err != nil {
-		return "", err
-	}
-
-	// Base64 encode the serialized data before returning
-	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
-}
-
-func ExportPublicKeyToPEM(pubkey *ecdsa.PublicKey) ([]byte, error) {
-	pubBytes, err := x509.MarshalPKIXPublicKey(pubkey)
-	if err != nil {
-		return nil, err
-	}
-
-	pubPEM := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "EC PUBLIC KEY",
-			Bytes: pubBytes,
-		},
-	)
-	return pubPEM, nil
-}
-
-func deserializeMerkleData(merkleProofBytes []byte) ([][]byte, []int64, error) {
-
-	buf := bytes.NewBuffer(merkleProofBytes)
-	decoder := gob.NewDecoder(buf)
-
-	var path [][]byte
-	var indexes []int64
-
-	if err := decoder.Decode(&path); err != nil {
-		return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
-	}
-	if err := decoder.Decode(&indexes); err != nil {
-		return nil, nil, fmt.Errorf("Error deserializing Merkle indexes: %s", err)
-	}
-
-	return path, indexes, nil
-}
-
 // MerkleRrResponseHandler verifies the DNS response containing Merkle proof and signatures.
 // It first extracts the proof and signature, then recreates the Merkle root from the proof,
 // and finally verifies the signature using a known public key.
@@ -356,17 +235,6 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 		log.Error("Error deserializing Merkle path and indexes: %s", err)
 		return
 	}
-	//
-	//buf := bytes.NewBufferString(merkleProofSerialized)
-	//decoder := gob.NewDecoder(buf)
-	//if err := decoder.Decode(&path); err != nil {
-	//	log.Error("Error deserializing Merkle path: %s", err)
-	//	return
-	//}
-	//if err := decoder.Decode(&indexes); err != nil {
-	//	log.Error("Error deserializing Merkle indexes: %s", err)
-	//	return
-	//}
 
 	// 3. Verify if the content is present using the extracted path.
 	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)
@@ -508,10 +376,6 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 	return nil, errors.New("Failed to decode PEM block containing public key")
 }
 
-type ECDSASignature struct {
-	R, S *big.Int
-}
-
 func createSignature(hash []byte) ([]byte, error) {
 	// check to ensure that the private key is not nil
 	if privateKey == nil {
@@ -575,4 +439,101 @@ func verifyMerklePath(dctx *DNSContext, merklePath [][]byte, indexes []int64, kn
 		log.Error("Merkle verification mismatch. Expected root hash: %x, Calculated hash: %x", knownRootHash, currentHash)
 	}
 	return isEqual, nil
+}
+
+// CalculateHash computes the hash of the DNSContext.
+// It hashes the serialized representation of both the request and the response.
+func (dctx *DNSContext) CalculateHash() ([]byte, error) {
+	h := sha256.New()
+
+	// Serialize and hash the request
+	reqBytes, err := dctx.Req.Pack()
+	if err != nil {
+		return nil, err
+	}
+	_, err = h.Write(reqBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Serialize and hash the response
+	resBytes, err := dctx.Res.Pack()
+	if err != nil {
+		return nil, err
+	}
+	_, err = h.Write(resBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return h.Sum(nil), nil
+}
+
+// Equals checks if two DNSContexts are equivalent.
+// This function checks equality based on the serialized representations of the DNS messages.
+func (dctx *DNSContext) Equals(other merkletree.Content) (bool, error) {
+	otherContent, ok := other.(*DNSContext)
+	if !ok {
+		return false, errors.New("value is not of type DNSContext")
+	}
+
+	dReqBytes, err := dctx.Req.Pack()
+	if err != nil {
+		return false, err
+	}
+
+	otherReqBytes, err := otherContent.Req.Pack()
+	if err != nil {
+		return false, err
+	}
+
+	if !bytes.Equal(dReqBytes, otherReqBytes) {
+		return false, nil
+	}
+
+	dResBytes, err := dctx.Res.Pack()
+	if err != nil {
+		return false, err
+	}
+
+	otherResBytes, err := otherContent.Res.Pack()
+	if err != nil {
+		return false, err
+	}
+
+	return bytes.Equal(dResBytes, otherResBytes), nil
+}
+
+// New function to serialize Merkle path and indexes
+func serializePathAndIndexes(path [][]byte, indexes []int64) (string, error) {
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+
+	if err := encoder.Encode(path); err != nil {
+		return "", err
+	}
+	if err := encoder.Encode(indexes); err != nil {
+		return "", err
+	}
+
+	// Base64 encode the serialized data before returning
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+func deserializeMerkleData(merkleProofBytes []byte) ([][]byte, []int64, error) {
+
+	buf := bytes.NewBuffer(merkleProofBytes)
+	decoder := gob.NewDecoder(buf)
+
+	var path [][]byte
+	var indexes []int64
+
+	if err := decoder.Decode(&path); err != nil {
+		return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
+	}
+	if err := decoder.Decode(&indexes); err != nil {
+		return nil, nil, fmt.Errorf("Error deserializing Merkle indexes: %s", err)
+	}
+
+	return path, indexes, nil
 }

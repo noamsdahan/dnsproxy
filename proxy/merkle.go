@@ -169,7 +169,7 @@ func processBatch() {
 
 // CalculateHash computes the hash of the DNSContext.
 // It hashes the serialized representation of both the request and the response.
-func (dctx DNSContext) CalculateHash() ([]byte, error) {
+func (dctx *DNSContext) CalculateHash() ([]byte, error) {
 	h := sha256.New()
 
 	// Serialize and hash the request
@@ -197,8 +197,8 @@ func (dctx DNSContext) CalculateHash() ([]byte, error) {
 
 // Equals checks if two DNSContexts are equivalent.
 // This function checks equality based on the serialized representations of the DNS messages.
-func (dctx DNSContext) Equals(other merkletree.Content) (bool, error) {
-	otherContent, ok := other.(DNSContext)
+func (dctx *DNSContext) Equals(other merkletree.Content) (bool, error) {
+	otherContent, ok := other.(*DNSContext)
 	if !ok {
 		return false, errors.New("value is not of type DNSContext")
 	}

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -269,8 +268,8 @@ func run(options *Options) {
 		dnsProxy.RequestHandler = ipv6Configuration.handleDNSRequest
 	}
 
-	dnsProxy.ResponseHandler = pocResponseHandler
-	StartBatchingProcess()
+	dnsProxy.ResponseHandler = proxy.MerkleResponseHandler
+	proxy.StartBatchingProcess()
 	// Start the proxy server.
 	err := dnsProxy.Start()
 	if err != nil {
@@ -694,81 +693,4 @@ func loadServersList(sources []string) []string {
 	}
 
 	return servers
-}
-
-type WaitingRequest struct {
-	request  *proxy.DNSContext
-	notifyCh chan int
-}
-
-type BatchedRequests struct {
-	requests []WaitingRequest
-}
-
-var batchedRequestsCh = make(chan WaitingRequest, 100) // A buffered channel for simplicity
-var processingBatch sync.Mutex
-var batchTimer *time.Timer
-var batchedRequests = &BatchedRequests{
-	requests: make([]WaitingRequest, 0, 100), // initial capacity for better performance
-}
-
-func StartBatchingProcess() {
-	go func() {
-		log.Debug("[BATCH_PROCESS] Starting batching process...")
-		for {
-			waitingReq := <-batchedRequestsCh
-
-			// Lock to ensure only one batch is processed at a time
-			processingBatch.Lock()
-
-			if batchTimer == nil {
-				// Start the timer for 80ms
-				log.Debug("[BATCH_PROCESS] Starting timer for 80ms...")
-				batchTimer = time.AfterFunc(80*time.Millisecond, processBatch)
-			}
-
-			// Add the request to the batch
-			batchedRequests.requests = append(batchedRequests.requests, waitingReq)
-			log.Debug("[BATCH_PROCESS] Added request to batch. Total requests in batch: %d\n", len(batchedRequests.requests))
-
-			processingBatch.Unlock()
-		}
-	}()
-}
-
-func pocResponseHandler(d *proxy.DNSContext, err error) {
-	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
-
-	waitingReq := WaitingRequest{
-		request:  d,
-		notifyCh: make(chan int),
-	}
-	batchedRequestsCh <- waitingReq
-
-	batchSize := <-waitingReq.notifyCh // Block until we have the batch size
-	log.Debug("[BATCH_PROCESS] This batch had a size of: %d\n", batchSize)
-	// TODO: Use batchSize to update the response. Replace this comment with your response updating logic.
-}
-
-func processBatch() {
-	processingBatch.Lock()
-	defer processingBatch.Unlock()
-
-	numRequests := len(batchedRequests.requests)
-	log.Debug("[BATCH_PROCESS] Timer triggered. Processing batch of %d requests...\n", numRequests)
-
-	// Simulated processing: just logging the number of messages in the batch.
-	for _, waitingReq := range batchedRequests.requests {
-		log.Debug("[BATCH_PROCESS] Processing request: %s\n", waitingReq.request.Req.Question[0].Name)
-	}
-
-	// Notify all waiting requests of the batch size
-	for _, waitingReq := range batchedRequests.requests {
-		waitingReq.notifyCh <- len(batchedRequests.requests)
-		close(waitingReq.notifyCh)
-	}
-
-	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	batchedRequests.requests = make([]WaitingRequest, 0, 100) // re-initialize the slice with initial capacity
-	batchTimer = nil
 }

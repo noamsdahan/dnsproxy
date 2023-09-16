@@ -241,6 +241,12 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	}
 
 	// 3. Verify if the content is present using the extracted path.
+	// before verifying, remove the TXT records from the response
+	if len(d.Res.Extra) < 3 {
+		log.Error("TXT records not found in DNS response")
+	} else {
+		d.Res.Extra = d.Res.Extra[:len(d.Res.Extra)-3]
+	}
 	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)
 	if err != nil || !ok {
 		log.Error("Error or mismatch in Merkle verification: %s", err)
@@ -265,7 +271,6 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 
 func extractTXTData(extra []dns.RR) ([]byte, []byte, []byte, error) {
 	var merkleRoot, signature, merkleProofSerialized string
-
 	for _, rr := range extra {
 		if txt, ok := rr.(*dns.TXT); ok {
 			switch {

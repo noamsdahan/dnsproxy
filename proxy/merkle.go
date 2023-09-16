@@ -523,29 +523,43 @@ func createSignature(hash []byte) ([]byte, error) {
 }
 
 func verifyMerklePath(dctx *DNSContext, merklePath [][]byte, indexes []int64, knownRootHash []byte, hashStrategy func() hash.Hash) (bool, error) {
+	log.Debug("Starting Merkle verification...")
+
 	leafHash, err := dctx.CalculateHash()
 	if err != nil {
+		log.Error("Error calculating leaf hash: %v", err)
 		return false, err
 	}
+
+	log.Debug("Calculated leaf hash: %x", leafHash)
 
 	currentHash := leafHash
 	for i, pathHash := range merklePath {
 		h := hashStrategy()
 
+		log.Debug("Iteration %d: Current hash: %x, Path hash: %x, Index: %d", i, currentHash, pathHash, indexes[i])
+
 		if indexes[i] == 0 { // left leaf
 			_, err := h.Write(append(pathHash, currentHash...))
 			if err != nil {
+				log.Error("Error writing to hash at iteration %d (left leaf): %v", i, err)
 				return false, err
 			}
 		} else { // right leaf
 			_, err := h.Write(append(currentHash, pathHash...))
 			if err != nil {
+				log.Error("Error writing to hash at iteration %d (right leaf): %v", i, err)
 				return false, err
 			}
 		}
 
 		currentHash = h.Sum(nil)
+		log.Debug("New current hash at iteration %d: %x", i, currentHash)
 	}
 
-	return bytes.Equal(currentHash, knownRootHash), nil
+	isEqual := bytes.Equal(currentHash, knownRootHash)
+	if !isEqual {
+		log.Error("Merkle verification mismatch. Expected root hash: %x, Calculated hash: %x", knownRootHash, currentHash)
+	}
+	return isEqual, nil
 }

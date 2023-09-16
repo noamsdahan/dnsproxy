@@ -357,17 +357,17 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 		log.Error("Error deserializing Merkle path and indexes: %s", err)
 		return
 	}
-
-	buf := bytes.NewBufferString(merkleProofSerialized)
-	decoder := gob.NewDecoder(buf)
-	if err := decoder.Decode(&path); err != nil {
-		log.Error("Error deserializing Merkle path: %s", err)
-		return
-	}
-	if err := decoder.Decode(&indexes); err != nil {
-		log.Error("Error deserializing Merkle indexes: %s", err)
-		return
-	}
+	//
+	//buf := bytes.NewBufferString(merkleProofSerialized)
+	//decoder := gob.NewDecoder(buf)
+	//if err := decoder.Decode(&path); err != nil {
+	//	log.Error("Error deserializing Merkle path: %s", err)
+	//	return
+	//}
+	//if err := decoder.Decode(&indexes); err != nil {
+	//	log.Error("Error deserializing Merkle indexes: %s", err)
+	//	return
+	//}
 
 	// 3. Verify if the content is present using the extracted path.
 	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)

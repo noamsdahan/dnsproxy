@@ -461,7 +461,12 @@ func verifyMerklePath(dctx *DNSContext, merklePath [][]byte, indexes []int64, kn
 // It hashes the serialized representation of both the request and the response.
 func (dctx *DNSContext) CalculateHash() ([]byte, error) {
 	h := sha256.New()
-
+	//print debug info
+	log.Debug("[MERKLE] Calculating hash for %s", dctx.Req.Question[0].Name)
+	// print all of Req
+	log.Debug("[MERKLE] Req: %s", dctx.Req.String())
+	// print all of Res
+	log.Debug("[MERKLE] Res: %s", dctx.Res.String())
 	// Serialize and hash the request
 	reqBytes, err := dctx.Req.Pack()
 	if err != nil {

@@ -174,15 +174,7 @@ func processBatch() {
 			log.Error("error serializing merkle path and indexes: %s", err)
 			continue
 		}
-		debugVerificationTest := true
-		if debugVerificationTest {
-			// Verify if the content is present using the extracted path.
-			ok, err := verifyMerklePath(waitingReq.response, path, indexes, merkleRootHash, sha256.New)
-			if err != nil || !ok {
-				log.Error("Error or mismatch in Merkle verification: %s", err)
-				continue
-			}
-		}
+
 		// encode the merkle root hash and signature to base64
 		merkleRootHashBase64 := base64.StdEncoding.EncodeToString(merkleRootHash)
 		merkleSignatureBase64 := base64.StdEncoding.EncodeToString(merkleSignature)
@@ -253,6 +245,8 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	if !verifySignature(knownRootHash, []byte(signature)) {
 		log.Error("Signature verification failed")
 		return
+	} else {
+		log.Debug("Signature verification successful")
 	}
 
 	// 6. Match the domain of the response with the requested domain.

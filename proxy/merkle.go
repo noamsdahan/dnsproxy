@@ -401,7 +401,12 @@ func createSignature(hash []byte) ([]byte, error) {
 
 func verifyMerklePath(dctx *DNSContext, merklePath [][]byte, indexes []int64, knownRootHash []byte, hashStrategy func() hash.Hash) (bool, error) {
 	log.Debug("Starting Merkle verification...")
-
+	// log merkle path length
+	log.Debug("Merkle path length: %d", len(merklePath))
+	// log indexes
+	log.Debug("Merkle path indexes: %d", indexes)
+	// log known root hash
+	log.Debug("Known root hash: %x", knownRootHash)
 	leafHash, err := dctx.CalculateHash()
 	if err != nil {
 		log.Error("Error calculating leaf hash: %v", err)

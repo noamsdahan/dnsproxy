@@ -166,17 +166,20 @@ func processBatch() {
 			log.Error("error serializing merkle path and indexes: %s", err)
 			continue
 		}
+		// encode the merkle root hash and signature to base64
+		merkleRootHashBase64 := base64.StdEncoding.EncodeToString(merkleRootHash)
+		merkleSignatureBase64 := base64.StdEncoding.EncodeToString(merkleSignature)
 		// Attach the Merkle root
 		merkleRootRR := &dns.TXT{
 			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{string(merkleRootHash)},
+			Txt: []string{merkleRootHashBase64},
 		}
 		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, merkleRootRR)
 
 		// Attach the signature
 		signatureRR := &dns.TXT{
 			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{string(merkleSignature)},
+			Txt: []string{string(merkleSignatureBase64)},
 		}
 		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, signatureRR)
 
@@ -310,13 +313,9 @@ func ExportPublicKeyToPEM(pubkey *ecdsa.PublicKey) ([]byte, error) {
 	return pubPEM, nil
 }
 
-func deserializeMerkleData(merkleProofSerialized string) ([][]byte, []int64, error) {
-	decodedData, err := base64.StdEncoding.DecodeString(merkleProofSerialized)
-	if err != nil {
-		return nil, nil, err
-	}
+func deserializeMerkleData(merkleProofBytes []byte) ([][]byte, []int64, error) {
 
-	buf := bytes.NewBuffer(decodedData)
+	buf := bytes.NewBuffer(merkleProofBytes)
 	decoder := gob.NewDecoder(buf)
 
 	var path [][]byte
@@ -392,7 +391,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	log.Debug("Verified DNS response successfully")
 }
 
-func extractTXTData(extra []dns.RR) ([]byte, string, string, error) {
+func extractTXTData(extra []dns.RR) ([]byte, []byte, []byte, error) {
 	var merkleRoot, signature, merkleProofSerialized string
 
 	for _, rr := range extra {
@@ -410,10 +409,24 @@ func extractTXTData(extra []dns.RR) ([]byte, string, string, error) {
 	}
 
 	if merkleRoot == "" || signature == "" || merkleProofSerialized == "" {
-		return nil, "", "", fmt.Errorf("Merkle root, signature, or proof not found in DNS response")
+		return nil, nil, nil, fmt.Errorf("Merkle root, signature, or proof not found in DNS response")
 	}
+	// log all 3 values in their base64 encoded form for debugging
+	log.Debug("Merkle root: %s", merkleRoot)
+	log.Debug("Signature: %s", signature)
+	log.Debug("Merkle proof: %s", merkleProofSerialized)
 
-	return []byte(merkleRoot), signature, merkleProofSerialized, nil
+	// decode the merkle root and signature from base64
+	merkleRootBytes, err := base64.StdEncoding.DecodeString(merkleRoot)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	merkleProofSerializedBytes, err := base64.StdEncoding.DecodeString(merkleProofSerialized)
+	return merkleRootBytes, signatureBytes, merkleProofSerializedBytes, nil
 }
 
 func verifySignature(hash []byte, signature []byte) bool {

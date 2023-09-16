@@ -233,9 +233,6 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 		return
 	}
 
-	// Log the serialized Merkle data
-	log.Debug("Serialized Merkle Data: %s", merkleProofSerialized)
-
 	// Deserialize the Merkle path and indexes
 	path, indexes, err := deserializeMerkleData(merkleProofSerialized)
 	if err != nil {
@@ -245,11 +242,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 
 	// 3. Verify if the content is present using the extracted path.
 	// before verifying, remove the TXT records from the response
-	if len(d.Res.Extra) < 4 {
-		log.Error("TXT records not found in DNS response")
-	} else {
-		d.Res.Extra = d.Res.Extra[:len(d.Res.Extra)-4]
-	}
+	d.Res.Extra = nil // just remove all extra records (TODO: do a more fine-grained job of this later)
 	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)
 	if err != nil || !ok {
 		log.Error("Error or mismatch in Merkle verification: %s", err)

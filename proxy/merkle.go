@@ -309,9 +309,16 @@ func ExportPublicKeyToPEM(pubkey *ecdsa.PublicKey) ([]byte, error) {
 }
 
 func deserializeMerkleData(merkleProofSerialized string) ([][]byte, []int64, error) {
+	// Log initial type and serialized data length
+	log.Debug("Length of serialized data: %d", len(merkleProofSerialized))
+	log.Debug("Type of serialized data: %T", merkleProofSerialized)
+
 	var path [][]byte
 	var indexes []int64
 	buf := bytes.NewBufferString(merkleProofSerialized)
+
+	log.Debug("Buffer content before decoding: %s", buf.String())
+
 	decoder := gob.NewDecoder(buf)
 	if err := decoder.Decode(&path); err != nil {
 		return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
@@ -337,6 +344,9 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 		log.Error("Error extracting Merkle root, signature, and proof from DNS response: %s", err)
 		return
 	}
+
+	// Log the serialized Merkle data
+	log.Debug("Serialized Merkle Data: %s", merkleProofSerialized)
 
 	// Deserialize the Merkle path and indexes
 	path, indexes, err := deserializeMerkleData(merkleProofSerialized)

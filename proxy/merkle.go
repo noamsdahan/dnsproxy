@@ -417,25 +417,32 @@ func verifySignature(hash []byte, signature []byte) bool {
 
 	return false
 }
+
 func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
 		log.Printf("Error reading private key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "EC PRIVATE KEY" {
-		log.Printf("Failed to decode PEM block containing private key from '%s'", filename)
-		return nil, errors.New("Failed to decode PEM block containing private key")
+
+	var block *pem.Block
+	for {
+		block, pemBytes = pem.Decode(pemBytes)
+		if block == nil {
+			break
+		}
+		if block.Type == "EC PRIVATE KEY" {
+			privateKey, err := x509.ParseECPrivateKey(block.Bytes)
+			if err != nil {
+				log.Printf("Error parsing EC private key from '%s'. Error: %v", filename, err)
+				return nil, err
+			}
+			return privateKey, nil
+		}
 	}
 
-	privateKey, err := x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
-		log.Printf("Error parsing EC private key from '%s'. Error: %v", filename, err)
-		return nil, err
-	}
-
-	return privateKey, nil
+	log.Printf("Failed to decode PEM block containing private key from '%s'", filename)
+	return nil, errors.New("Failed to decode PEM block containing private key")
 }
 
 func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {

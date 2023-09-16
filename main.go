@@ -188,6 +188,12 @@ type Options struct {
 	// localhost:6060 or not.
 	Pprof bool `yaml:"pprof" long:"pprof" description:"If present, exposes pprof information on localhost:6060." optional:"yes" optional-value:"true"`
 
+	// MerkleANS defines whether the merkle tree authoritative name server behavior is enabled or not.
+	MerkleANS bool `yaml:"merkle-ans" long:"merkle-ans" description:"If present, dnsproxy will act as a merkle tree authoritative name server." optional:"yes" optional-value:"true"`
+
+	//MerkleRR defines whether the merkle tree recursive resolver behavior is enabled or not.
+	MerkleRR bool `yaml:"merkle-rr" long:"merkle-rr" description:"If present, dnsproxy will act as a merkle tree recursive resolver." optional:"yes" optional-value:"true"`
+
 	// Print DNSProxy version (just for the help)
 	Version bool `yaml:"version" long:"version" description:"Prints the program version"`
 }
@@ -267,9 +273,10 @@ func run(options *Options) {
 		ipv6Configuration := ipv6Configuration{ipv6Disabled: options.IPv6Disabled}
 		dnsProxy.RequestHandler = ipv6Configuration.handleDNSRequest
 	}
-
-	dnsProxy.ResponseHandler = proxy.MerkleResponseHandler
-	proxy.StartBatchingProcess()
+	if options.MerkleANS {
+		dnsProxy.ResponseHandler = proxy.MerkleResponseHandler
+		proxy.StartBatchingProcess()
+	}
 	// Start the proxy server.
 	err := dnsProxy.Start()
 	if err != nil {

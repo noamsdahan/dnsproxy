@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/base64"
 	"encoding/gob"
 	"encoding/pem"
 	"fmt"
@@ -279,18 +280,19 @@ func (dctx DNSContext) Serialize() ([]byte, error) {
 }
 
 // New function to serialize Merkle path and indexes
-func serializePathAndIndexes(path [][]byte, indexes []int64) ([]byte, error) {
+func serializePathAndIndexes(path [][]byte, indexes []int64) (string, error) {
 	var buf bytes.Buffer
 	encoder := gob.NewEncoder(&buf)
 
 	if err := encoder.Encode(path); err != nil {
-		return nil, err
+		return "", err
 	}
 	if err := encoder.Encode(indexes); err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return buf.Bytes(), nil
+	// Base64 encode the serialized data before returning
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 func ExportPublicKeyToPEM(pubkey *ecdsa.PublicKey) ([]byte, error) {
@@ -309,23 +311,24 @@ func ExportPublicKeyToPEM(pubkey *ecdsa.PublicKey) ([]byte, error) {
 }
 
 func deserializeMerkleData(merkleProofSerialized string) ([][]byte, []int64, error) {
-	// Log initial type and serialized data length
-	log.Debug("Length of serialized data: %d", len(merkleProofSerialized))
-	log.Debug("Type of serialized data: %T", merkleProofSerialized)
+	decodedData, err := base64.StdEncoding.DecodeString(merkleProofSerialized)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	buf := bytes.NewBuffer(decodedData)
+	decoder := gob.NewDecoder(buf)
 
 	var path [][]byte
 	var indexes []int64
-	buf := bytes.NewBufferString(merkleProofSerialized)
 
-	log.Debug("Buffer content before decoding: %s", buf.String())
-
-	decoder := gob.NewDecoder(buf)
 	if err := decoder.Decode(&path); err != nil {
 		return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
 	}
 	if err := decoder.Decode(&indexes); err != nil {
 		return nil, nil, fmt.Errorf("Error deserializing Merkle indexes: %s", err)
 	}
+
 	return path, indexes, nil
 }
 
@@ -391,6 +394,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 
 func extractTXTData(extra []dns.RR) ([]byte, string, string, error) {
 	var merkleRoot, signature, merkleProofSerialized string
+
 	for _, rr := range extra {
 		if txt, ok := rr.(*dns.TXT); ok {
 			switch {
@@ -404,9 +408,11 @@ func extractTXTData(extra []dns.RR) ([]byte, string, string, error) {
 			}
 		}
 	}
+
 	if merkleRoot == "" || signature == "" || merkleProofSerialized == "" {
 		return nil, "", "", fmt.Errorf("Merkle root, signature, or proof not found in DNS response")
 	}
+
 	return []byte(merkleRoot), signature, merkleProofSerialized, nil
 }
 

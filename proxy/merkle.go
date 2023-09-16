@@ -458,7 +458,7 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 		if block == nil {
 			break
 		}
-		if block.Type == "EC PUBLIC KEY" {
+		if block.Type == "PUBLIC KEY" {
 			pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
 			if err != nil {
 				log.Printf("Error parsing PKIX public key from '%s'. Error: %v", filename, err)

@@ -139,7 +139,8 @@ func processBatch() {
 		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingReq.response.Req.Question[0].Name)
 	}
 	// TODO: sort responses by source IP address
-
+	// log length of contents
+	log.Debug("[BATCH_PROCESS] Total responses in batch: %d\n", len(contents))
 	tree, err := merkletree.NewTree(contents)
 	if err != nil {
 		log.Error("error creating merkle tree: %s", err)

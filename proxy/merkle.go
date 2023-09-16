@@ -245,10 +245,10 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 
 	// 3. Verify if the content is present using the extracted path.
 	// before verifying, remove the TXT records from the response
-	if len(d.Res.Extra) < 3 {
+	if len(d.Res.Extra) < 4 {
 		log.Error("TXT records not found in DNS response")
 	} else {
-		d.Res.Extra = d.Res.Extra[:len(d.Res.Extra)-3]
+		d.Res.Extra = d.Res.Extra[:len(d.Res.Extra)-4]
 	}
 	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)
 	if err != nil || !ok {

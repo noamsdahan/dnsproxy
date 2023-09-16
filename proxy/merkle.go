@@ -3,16 +3,19 @@ package proxy
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/gob"
 	"encoding/pem"
+	"fmt"
 	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
 	"github.com/cbergoon/merkletree"
 	"github.com/miekg/dns"
+	"hash"
+	"math/big"
 	"os"
 	"sync"
 	"time"
@@ -31,31 +34,35 @@ type BatchedRequests struct {
 var privateKey *ecdsa.PrivateKey
 var publicKey *ecdsa.PublicKey
 
-var batchedRequestsCh = make(chan WaitingResponse, 256) // A buffered channel for simplicity
+var batchedRequestsCh = make(chan WaitingResponse, batchRequestChanSize) // A buffered channel for simplicity
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedResponses = &BatchedRequests{
-	responses: make([]WaitingResponse, 0, 256), // initial capacity for better performance
+	responses: make([]WaitingResponse, 0, batchRequestChanSize), // initial capacity for better performance
 }
 
+const batchRequestChanSize = 256
 const txtRecordTTL = 60
 const NotificationProcessed = 0
 
 // Just key initialization for initial testing TODO: remove and simplify
 func init() {
-	privateKey, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	publicKey = &privateKey.PublicKey
+	var err error
 
-	// Usage:
-	pemBytes, err := ExportPublicKeyToPEM(publicKey)
+	// Attempt to load private key from file.
+	privateKey, err = LoadPrivateKeyFromFile("private.pem")
 	if err != nil {
-		log.Fatalf("Error exporting public key: %v", err)
+		log.Debug("Failed to load private key from file. Error: %v", err)
 	}
 
-	// If you want to write it to a file
-	err = os.WriteFile("publicKey.pem", pemBytes, 0644)
+	// Attempt to load public key from file.
+	publicKey, err = LoadPublicKeyFromFile("public.pem")
 	if err != nil {
-		log.Fatalf("Error writing public key to file: %v", err)
+		log.Debug("Failed to load public key from file. Error: %v", err)
+		// If private key is loaded successfully, use its public part.
+		if privateKey != nil {
+			publicKey = &privateKey.PublicKey
+		}
 	}
 }
 
@@ -88,12 +95,16 @@ func StartBatchingProcess() {
 	}()
 }
 
-// MerkleResponseHandler is the response handler for the Merkle batching process.
+// MerkleAnsResponseHandler is the response handler for the Merkle batching process.
 // It is called when a response is received from the upstream server. For every response received,
 // it adds the response to the batch and waits for the batch to be processed.
 // After the batch is processed, it updates the response with the Merkle proof.
-func MerkleResponseHandler(d *DNSContext, err error) {
+func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
+	if err != nil {
+		log.Error("[BATCH_PROCESS] Error in DNS response: %s\n", err)
+		return
+	}
 
 	waitingRes := WaitingResponse{
 		response: d,
@@ -124,14 +135,17 @@ func processBatch() {
 		log.Error("error creating merkle tree: %s", err)
 		return
 	}
+
 	// Sign the Merkle root
-	hash := sha256.Sum256([]byte(tree.MerkleRoot()))
-	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hash[:])
+	merkleRootHash := []byte(tree.MerkleRoot())
+	merkleSignature, err := createSignature(merkleRootHash)
 	if err != nil {
 		log.Error("error signing merkle root: %s", err)
 		return
 	}
-	merkleSignature := r.String() + s.String()
+
+	// merkleSignature is now a byte slice containing the ASN.1 DER encoded signature.
+	// You can encode it to a string format like hex or base64 if needed.
 
 	// Notify all waiting responses of the batch size
 	for _, waitingReq := range batchedResponses.responses {
@@ -146,10 +160,17 @@ func processBatch() {
 			log.Error("error serializing merkle path and indexes: %s", err)
 			continue
 		}
+		// Attach the Merkle root
+		merkleRootRR := &dns.TXT{
+			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
+			Txt: []string{string(merkleRootHash)},
+		}
+		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, merkleRootRR)
+
 		// Attach the signature
 		signatureRR := &dns.TXT{
 			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{merkleSignature},
+			Txt: []string{string(merkleSignature)},
 		}
 		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, signatureRR)
 
@@ -163,7 +184,7 @@ func processBatch() {
 	}
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	batchedResponses.responses = make([]WaitingResponse, 0, 100) // re-initialize the slice with initial capacity
+	batchedResponses.responses = make([]WaitingResponse, 0, batchRequestChanSize) // re-initialize the slice with initial capacity
 	batchTimer = nil
 }
 
@@ -280,4 +301,207 @@ func ExportPublicKeyToPEM(pubkey *ecdsa.PublicKey) ([]byte, error) {
 		},
 	)
 	return pubPEM, nil
+}
+
+func deserializeMerkleData(merkleProofSerialized string) ([][]byte, []int64, error) {
+	var path [][]byte
+	var indexes []int64
+	buf := bytes.NewBufferString(merkleProofSerialized)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&path); err != nil {
+		return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
+	}
+	if err := decoder.Decode(&indexes); err != nil {
+		return nil, nil, fmt.Errorf("Error deserializing Merkle indexes: %s", err)
+	}
+	return path, indexes, nil
+}
+
+// MerkleRrResponseHandler verifies the DNS response containing Merkle proof and signatures.
+// It first extracts the proof and signature, then recreates the Merkle root from the proof,
+// and finally verifies the signature using a known public key.
+func MerkleRrResponseHandler(d *DNSContext, err error) {
+	if err != nil {
+		log.Error("Error in DNS response: %s", err)
+		return
+	}
+
+	// Extract the Merkle root, signature, and serialized proof from TXT records
+	knownRootHash, signature, merkleProofSerialized, err := extractTXTData(d.Res.Extra)
+	if err != nil {
+		log.Error("Error extracting Merkle root, signature, and proof from DNS response: %s", err)
+		return
+	}
+
+	// Deserialize the Merkle path and indexes
+	path, indexes, err := deserializeMerkleData(merkleProofSerialized)
+	if err != nil {
+		log.Error("Error deserializing Merkle path and indexes: %s", err)
+		return
+	}
+
+	buf := bytes.NewBufferString(merkleProofSerialized)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&path); err != nil {
+		log.Error("Error deserializing Merkle path: %s", err)
+		return
+	}
+	if err := decoder.Decode(&indexes); err != nil {
+		log.Error("Error deserializing Merkle indexes: %s", err)
+		return
+	}
+
+	// 3. Verify if the content is present using the extracted path.
+	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)
+	if err != nil || !ok {
+		log.Error("Error or mismatch in Merkle verification: %s", err)
+		return
+	}
+
+	// 4. Verify the signature (Assuming you have a verifySignature function ready)
+	if !verifySignature(knownRootHash, []byte(signature)) {
+		log.Error("Signature verification failed")
+		return
+	}
+
+	// 6. Match the domain of the response with the requested domain.
+	if d.Req.Question[0].Name != d.Res.Question[0].Name {
+		log.Error("Domain name mismatch between request and response")
+		return
+	}
+
+	// If everything is fine, handle the response
+	log.Debug("Verified DNS response successfully")
+}
+
+func extractTXTData(extra []dns.RR) ([]byte, string, string, error) {
+	var merkleRoot, signature, merkleProofSerialized string
+	for _, rr := range extra {
+		if txt, ok := rr.(*dns.TXT); ok {
+			switch {
+			case merkleRoot == "":
+				merkleRoot = txt.Txt[0]
+			case signature == "":
+				signature = txt.Txt[0]
+			default:
+				merkleProofSerialized = txt.Txt[0]
+				break
+			}
+		}
+	}
+	if merkleRoot == "" || signature == "" || merkleProofSerialized == "" {
+		return nil, "", "", fmt.Errorf("Merkle root, signature, or proof not found in DNS response")
+	}
+	return []byte(merkleRoot), signature, merkleProofSerialized, nil
+}
+
+func verifySignature(hash []byte, signature []byte) bool {
+	// Compute the SHA-256 hash of the data
+
+	var rs ECDSASignature
+	// Unmarshal the ASN.1 DER encoded signature
+	if _, err := asn1.Unmarshal(signature, &rs); err != nil {
+		log.Println("Failed to unmarshal signature:", err)
+		return false
+	}
+
+	// Verify the signature
+	if ecdsa.Verify(publicKey, hash[:], rs.R, rs.S) {
+		return true
+	}
+
+	return false
+}
+
+func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
+	pemBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "EC PRIVATE KEY" {
+		return nil, errors.New("Failed to decode PEM block containing private key")
+	}
+
+	privateKey, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return privateKey, nil
+}
+
+func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
+	pemBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "EC PUBLIC KEY" {
+		return nil, errors.New("Failed to decode PEM block containing public key")
+	}
+
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	publicKey, ok := pubInterface.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, errors.New("Failed to assert as ECDSA public key")
+	}
+
+	return publicKey, nil
+}
+
+type ECDSASignature struct {
+	R, S *big.Int
+}
+
+func createSignature(data []byte) ([]byte, error) {
+	// Compute the SHA-256 hash of the data
+	hashed := sha256.Sum256(data)
+
+	// Sign the data
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hashed[:])
+	if err != nil {
+		return nil, err
+	}
+
+	// Marshal the signature to ASN.1 DER format
+	sig := ECDSASignature{R: r, S: s}
+	sigASN1, err := asn1.Marshal(sig)
+	if err != nil {
+		return nil, err
+	}
+
+	return sigASN1, nil
+}
+
+func verifyMerklePath(dctx *DNSContext, merklePath [][]byte, indexes []int64, knownRootHash []byte, hashStrategy func() hash.Hash) (bool, error) {
+	leafHash, err := dctx.CalculateHash()
+	if err != nil {
+		return false, err
+	}
+
+	currentHash := leafHash
+	for i, pathHash := range merklePath {
+		h := hashStrategy()
+
+		if indexes[i] == 0 { // left leaf
+			_, err := h.Write(append(pathHash, currentHash...))
+			if err != nil {
+				return false, err
+			}
+		} else { // right leaf
+			_, err := h.Write(append(currentHash, pathHash...))
+			if err != nil {
+				return false, err
+			}
+		}
+
+		currentHash = h.Sum(nil)
+	}
+
+	return bytes.Equal(currentHash, knownRootHash), nil
 }

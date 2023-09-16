@@ -122,8 +122,11 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	}
 	batchedRequestsCh <- waitingRes
 
-	batchSize := <-waitingRes.notifyCh // Block until we have the batch size
-	log.Debug("[BATCH_PROCESS] This batch had a size of: %d\n", batchSize)
+	errCode := <-waitingRes.notifyCh // Block until we have the batch size
+	if errCode != NotificationProcessed {
+		log.Error("[BATCH_PROCESS] Error processing batch: %d\n", errCode)
+		return
+	}
 	// TODO: Use batchSize to update the response. Replace this comment with your response updating logic.
 }
 

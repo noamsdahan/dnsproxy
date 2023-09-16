@@ -274,8 +274,10 @@ func run(options *Options) {
 		dnsProxy.RequestHandler = ipv6Configuration.handleDNSRequest
 	}
 	if options.MerkleANS {
-		dnsProxy.ResponseHandler = proxy.MerkleResponseHandler
+		dnsProxy.ResponseHandler = proxy.MerkleAnsResponseHandler
 		proxy.StartBatchingProcess()
+	} else if options.MerkleRR {
+		dnsProxy.ResponseHandler = proxy.MerkleRrResponseHandler
 	}
 	// Start the proxy server.
 	err := dnsProxy.Start()

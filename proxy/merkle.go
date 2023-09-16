@@ -458,12 +458,9 @@ type ECDSASignature struct {
 	R, S *big.Int
 }
 
-func createSignature(data []byte) ([]byte, error) {
-	// Compute the SHA-256 hash of the data
-	hashed := sha256.Sum256(data)
-
+func createSignature(hash []byte) ([]byte, error) {
 	// Sign the data
-	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hashed[:])
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hash[:])
 	if err != nil {
 		return nil, err
 	}

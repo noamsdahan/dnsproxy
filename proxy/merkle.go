@@ -464,6 +464,21 @@ func (dctx *DNSContext) CalculateHash() ([]byte, error) {
 	// print all of Res
 	log.Debug("[MERKLE] Res: %s", dctx.Res.String())
 	// Serialize and hash the request
+	// strip everything except the question and answer sections
+	// write all questions into a bytes buffer, packed & serialized
+	for _, question := range dctx.Req.Question {
+		// add the question to the buffer
+		if _, err := h.Write([]byte(question.String())); err != nil {
+			return nil, err
+		}
+
+	}
+	for _, answer := range dctx.Res.Answer {
+		// add the answer to the buffer
+		if _, err := h.Write([]byte(answer.String())); err != nil {
+			return nil, err
+		}
+	}
 	reqBytes, err := dctx.Req.Pack()
 	if err != nil {
 		return nil, err

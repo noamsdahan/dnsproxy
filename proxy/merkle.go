@@ -483,25 +483,6 @@ func (dctx *DNSContext) CalculateHash() ([]byte, error) {
 			return nil, err
 		}
 	}
-	reqBytes, err := dctx.Req.Pack()
-	if err != nil {
-		return nil, err
-	}
-	_, err = h.Write(reqBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	// Serialize and hash the response
-	resBytes, err := dctx.Res.Pack()
-	if err != nil {
-		return nil, err
-	}
-	_, err = h.Write(resBytes)
-	if err != nil {
-		return nil, err
-	}
-
 	return h.Sum(nil), nil
 }
 

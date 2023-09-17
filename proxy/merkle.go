@@ -35,6 +35,18 @@ type BatchedRequests struct {
 	responses []WaitingResponse
 }
 
+type MerkleProof struct {
+	MerkleRoot []byte
+	Signature  []byte
+	Proof      [][]byte
+}
+
+type MerkleProofB64 struct {
+	MerkleRoot string
+	Signature  string
+	Proof      string
+}
+
 // Assuming you have the private key and public key for ecdsa
 var privateKey *ecdsa.PrivateKey
 var publicKey *ecdsa.PublicKey
@@ -46,9 +58,12 @@ var batchedResponses = &BatchedRequests{
 	responses: make([]WaitingResponse, 0, batchRequestChanSize), // initial capacity for better performance
 }
 
-const batchRequestChanSize = 128
-const txtRecordTTL = 60
-const NotificationProcessed = 0
+const (
+	batchRequestChanSize  = 128
+	txtRecordTTL          = 60
+	NotificationProcessed = 0
+	hashesPerTxtRecord    = 4
+)
 
 // Just key initialization for initial testing TODO: remove and simplify
 func init() {
@@ -141,6 +156,7 @@ func processBatch() {
 		contents = append(contents, waitingReq.response)
 		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingReq.response.Req.Question[0].Name)
 	}
+	proof := &MerkleProof{}
 	// TODO: sort responses by source IP address
 	// log length of contents
 	log.Debug("[BATCH_PROCESS] Total responses in batch: %d\n", len(contents))
@@ -151,15 +167,12 @@ func processBatch() {
 	}
 
 	// Sign the Merkle root
-	merkleRootHash := []byte(tree.MerkleRoot())
-	merkleSignature, err := createSignature(merkleRootHash)
+	proof.MerkleRoot = []byte(tree.MerkleRoot())
+	proof.Signature, err = createSignature(proof.MerkleRoot)
 	if err != nil {
 		log.Error("error signing merkle root: %s", err)
 		return
 	}
-
-	// merkleSignature is now a byte slice containing the ASN.1 DER encoded signature.
-	// You can encode it to a string format like hex or base64 if needed.
 
 	// Notify all waiting responses of the batch size
 	for _, waitingReq := range batchedResponses.responses {
@@ -169,34 +182,38 @@ func processBatch() {
 			continue
 		}
 		// Serialize and append the Merkle path and indexes
-		proofBytes, err := serializePathAndIndexes(path, indexes)
+		proof.Proof, err = serializePathAndIndexes(path, indexes)
 		if err != nil {
 			log.Error("error serializing merkle path and indexes: %s", err)
 			continue
 		}
 
-		// encode the merkle root hash and signature to base64
-		merkleRootHashBase64 := base64.StdEncoding.EncodeToString(merkleRootHash)
-		merkleSignatureBase64 := base64.StdEncoding.EncodeToString(merkleSignature)
+		// Encode the Merkle proof to base64
 		// Attach the Merkle root
 		merkleRootRR := &dns.TXT{
 			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{merkleRootHashBase64},
+			Txt: []string{base64.StdEncoding.EncodeToString(proof.MerkleRoot)},
 		}
 		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, merkleRootRR)
 
 		// Attach the signature
 		signatureRR := &dns.TXT{
 			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{string(merkleSignatureBase64)},
+			Txt: []string{base64.StdEncoding.EncodeToString(proof.Signature)},
 		}
 		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, signatureRR)
 
-		proofRR := &dns.TXT{
-			Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{string(proofBytes)},
+		for _, proofStep := range proof.Proof {
+			// Base64 encoding to ensure the data fits within DNS TXT character restrictions
+			encoded := base64.StdEncoding.EncodeToString(proofStep)
+
+			rr := &dns.TXT{
+				Hdr: dns.RR_Header{Name: waitingReq.response.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
+				Txt: []string{encoded},
+			}
+			waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, rr)
 		}
-		waitingReq.response.Res.Extra = append(waitingReq.response.Res.Extra, proofRR)
+
 		waitingReq.notifyCh <- NotificationProcessed
 		close(waitingReq.notifyCh)
 	}
@@ -257,8 +274,10 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	log.Debug("Verified DNS response successfully")
 }
 
-func extractTXTData(extra []dns.RR) ([]byte, []byte, []byte, error) {
-	var merkleRoot, signature, merkleProofSerialized string
+func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
+	var merkleRoot, signature string
+	var serializedMerkleDataParts []string
+
 	for _, rr := range extra {
 		if txt, ok := rr.(*dns.TXT); ok {
 			switch {
@@ -267,21 +286,23 @@ func extractTXTData(extra []dns.RR) ([]byte, []byte, []byte, error) {
 			case signature == "":
 				signature = txt.Txt[0]
 			default:
-				merkleProofSerialized = txt.Txt[0]
-				break
+				serializedMerkleDataParts = append(serializedMerkleDataParts, txt.Txt[0])
 			}
 		}
 	}
 
-	if merkleRoot == "" || signature == "" || merkleProofSerialized == "" {
+	if merkleRoot == "" || signature == "" || len(serializedMerkleDataParts) == 0 {
 		return nil, nil, nil, fmt.Errorf("Merkle root, signature, or proof not found in DNS response")
 	}
-	// log all 3 values in their base64 encoded form for debugging
+
+	// Log values in their base64 encoded form for debugging
 	log.Debug("Merkle root: %s", merkleRoot)
 	log.Debug("Signature: %s", signature)
-	log.Debug("Merkle proof: %s", merkleProofSerialized)
+	for _, part := range serializedMerkleDataParts {
+		log.Debug("Merkle proof part: %s", part)
+	}
 
-	// decode the merkle root and signature from base64
+	// Decode the merkle root and signature from base64
 	merkleRootBytes, err := base64.StdEncoding.DecodeString(merkleRoot)
 	if err != nil {
 		return nil, nil, nil, err
@@ -290,8 +311,18 @@ func extractTXTData(extra []dns.RR) ([]byte, []byte, []byte, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	merkleProofSerializedBytes, err := base64.StdEncoding.DecodeString(merkleProofSerialized)
-	return merkleRootBytes, signatureBytes, merkleProofSerializedBytes, nil
+
+	// Decode the merkle data parts from base64
+	var merkleDataParts [][]byte
+	for _, part := range serializedMerkleDataParts {
+		bytesPart, err := base64.StdEncoding.DecodeString(part)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		merkleDataParts = append(merkleDataParts, bytesPart)
+	}
+
+	return merkleRootBytes, signatureBytes, merkleDataParts, nil
 }
 
 func verifySignature(hash []byte, signature []byte) bool {
@@ -513,35 +544,52 @@ func (dctx *DNSContext) Equals(other merkletree.Content) (bool, error) {
 	return bytes.Equal(dResBytes, otherResBytes), nil
 }
 
-// New function to serialize Merkle path and indexes
-func serializePathAndIndexes(path [][]byte, indexes []int64) (string, error) {
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
+func serializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
+	var serializedData [][]byte
 
-	if err := encoder.Encode(path); err != nil {
-		return "", err
+	// 1. Serialize indexes and add them to the result slice
+	indexBuffer := new(bytes.Buffer)
+	indexEncoder := gob.NewEncoder(indexBuffer)
+	if err := indexEncoder.Encode(indexes); err != nil {
+		return nil, err
 	}
-	if err := encoder.Encode(indexes); err != nil {
-		return "", err
+	serializedData = append(serializedData, indexBuffer.Bytes())
+
+	// 2. Serialize hashes in chunks and add each chunk to the result slice
+	for i := 0; i < len(path); i += hashesPerTxtRecord {
+		end := i + hashesPerTxtRecord
+		if end > len(path) {
+			end = len(path)
+		}
+		hashBuffer := new(bytes.Buffer)
+		hashEncoder := gob.NewEncoder(hashBuffer)
+		if err := hashEncoder.Encode(path[i:end]); err != nil {
+			return nil, err
+		}
+		serializedData = append(serializedData, hashBuffer.Bytes())
 	}
 
-	// Base64 encode the serialized data before returning
-	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	return serializedData, nil
 }
 
-func deserializeMerkleData(merkleProofBytes []byte) ([][]byte, []int64, error) {
-
-	buf := bytes.NewBuffer(merkleProofBytes)
-	decoder := gob.NewDecoder(buf)
-
+func deserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 	var path [][]byte
 	var indexes []int64
 
-	if err := decoder.Decode(&path); err != nil {
-		return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
-	}
-	if err := decoder.Decode(&indexes); err != nil {
+	// First record is for indexes
+	indexDecoder := gob.NewDecoder(bytes.NewBuffer(records[0]))
+	if err := indexDecoder.Decode(&indexes); err != nil {
 		return nil, nil, fmt.Errorf("Error deserializing Merkle indexes: %s", err)
+	}
+
+	// Subsequent records are for the hashes
+	for _, record := range records[1:] {
+		var chunk [][]byte
+		hashDecoder := gob.NewDecoder(bytes.NewBuffer(record))
+		if err := hashDecoder.Decode(&chunk); err != nil {
+			return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
+		}
+		path = append(path, chunk...)
 	}
 
 	return path, indexes, nil

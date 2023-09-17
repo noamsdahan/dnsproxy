@@ -233,8 +233,6 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	}
 
 	// 3. Verify if the content is present using the extracted path.
-	// before verifying, remove the TXT records from the response
-	d.Res.Extra = nil // just remove all extra records (TODO: do a more fine-grained job of this later)
 	ok, err := verifyMerklePath(d, path, indexes, knownRootHash, sha256.New)
 	if err != nil || !ok {
 		log.Error("Error or mismatch in Merkle verification: %s", err)

@@ -62,7 +62,7 @@ var batchedRequestsCh = make(chan WaitingResponse, batchRequestChanSize) // tryi
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedResponses = &BatchedRequests{
-	responses: make([]WaitingResponse, batchRequestChanSize), // initial capacity for better performance
+	responses: make([]WaitingResponse, batchRequestChanSize, batchRequestChanSize), // initial capacity for better performance
 }
 
 const (

@@ -79,22 +79,22 @@ func init() {
 	// Attempt to load private key from file.
 	privateKeyMerkle, err = LoadPrivateKeyFromFile("private.pem")
 	if err != nil {
-		log.Printf("Failed to load private key from file. Error: %v", err)
+		log.Info("Failed to load private key from file. Error: %v", err)
 	} else {
-		log.Println("Successfully loaded private key from file.")
+		log.Info("Successfully loaded private key from file.")
 	}
 
 	// Attempt to load public key from file.
 	publicKeyMerkle, err = LoadPublicKeyFromFile("public.pem")
 	if err != nil {
-		log.Printf("Failed to load public key from file. Error: %v", err)
+		log.Error("Failed to load public key from file. Error: %v", err)
 		// If private key is loaded successfully, use its public part.
 		if privateKeyMerkle != nil {
 			publicKeyMerkle = &privateKeyMerkle.PublicKey
-			log.Println("Using the public part of the loaded private key.")
+			log.Info("Using the public part of the loaded private key.")
 		}
 	} else {
-		log.Println("Successfully loaded public key from file.")
+		log.Info("Successfully loaded public key from file.")
 	}
 }
 
@@ -368,7 +368,7 @@ func verifySignature(hash []byte, signature []byte) bool {
 	var rs ECDSASignature
 	// Unmarshal the ASN.1 DER encoded signature
 	if _, err := asn1.Unmarshal(signature, &rs); err != nil {
-		log.Println("Failed to unmarshal signature:", err)
+		log.Error("Failed to unmarshal signature:", err)
 		return false
 	}
 
@@ -383,7 +383,7 @@ func verifySignature(hash []byte, signature []byte) bool {
 func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
-		log.Printf("Error reading private key file '%s'. Error: %v", filename, err)
+		log.Error("Error reading private key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
 
@@ -396,21 +396,21 @@ func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
 		if block.Type == "EC PRIVATE KEY" {
 			privateKey, err := x509.ParseECPrivateKey(block.Bytes)
 			if err != nil {
-				log.Printf("Error parsing EC private key from '%s'. Error: %v", filename, err)
+				log.Error("Error parsing EC private key from '%s'. Error: %v", filename, err)
 				return nil, err
 			}
 			return privateKey, nil
 		}
 	}
 
-	log.Printf("Failed to decode PEM block containing private key from '%s'", filename)
+	log.Error("Failed to decode PEM block containing private key from '%s'", filename)
 	return nil, errors.New("Failed to decode PEM block containing private key")
 }
 
 func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
-		log.Printf("Error reading public key file '%s'. Error: %v", filename, err)
+		log.Error("Error reading public key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
 
@@ -423,13 +423,13 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 		if block.Type == "PUBLIC KEY" {
 			pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
 			if err != nil {
-				log.Printf("Error parsing PKIX public key from '%s'. Error: %v", filename, err)
+				log.Error("Error parsing PKIX public key from '%s'. Error: %v", filename, err)
 				return nil, err
 			}
 
 			publicKey, ok := pubInterface.(*ecdsa.PublicKey)
 			if !ok {
-				log.Printf("Failed to assert public key from '%s' as ECDSA public key", filename)
+				log.Error("Failed to assert public key from '%s' as ECDSA public key", filename)
 				return nil, errors.New("Failed to assert as ECDSA public key")
 			}
 
@@ -437,7 +437,7 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 		}
 	}
 
-	log.Printf("Failed to decode PEM block containing public key from '%s'", filename)
+	log.Error("Failed to decode PEM block containing public key from '%s'", filename)
 	return nil, errors.New("Failed to decode PEM block containing public key")
 }
 

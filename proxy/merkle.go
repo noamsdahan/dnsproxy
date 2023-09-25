@@ -281,7 +281,8 @@ func processBatch() {
 		log.Debug("[BATCH_PROCESS] Response size: %d\n", waitingReq.response.DNSContext.Res.Len())
 		// log the length of the last TXT record
 		log.Debug("[BATCH_PROCESS] Last TXT record length: %d\n", len(waitingReq.response.DNSContext.Res.Extra[len(waitingReq.response.DNSContext.Res.Extra)-1].String()))
-		// check that the DNS total length is less than 512 bytes
+		// TODO: handle oversized responses, truncate, separate TCP & UDP, all for next time
+		// check that the DNS total length is less than 512 bytes if the protocol is UDP
 		if waitingReq.response.DNSContext.Res.Len() > 512 {
 			log.Error("DNS response exceeds 512 bytes, size is %d, there are %d requests in the batch", waitingReq.response.DNSContext.Res.Len(), len(currentBatch))
 			log.Debug("DNS response: %s", waitingReq.response.DNSContext.Res.String())

@@ -119,7 +119,7 @@ func StartBatchingProcess() {
 				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, %d", batchSize, len(batchedResponses.responses))
 			}
 			// Check if we've accumulated 256 requests, and if so, process them and reset timer
-			if len(batchedResponses.responses) == batchSize {
+			if len(batchedResponses.responses) >= batchSize {
 				if batchTimer != nil {
 					batchTimer.Stop()
 					batchTimer = nil

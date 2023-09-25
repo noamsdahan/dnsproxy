@@ -250,16 +250,16 @@ func processBatch() {
 		waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, signatureRR)
 
 		extraLen := len(waitingReq.response.DNSContext.Res.Extra)
-		totalProofs := 2 + len(proof.Proof) // for saltRR and signatureRR + all proofSteps
-		if cap(waitingReq.response.DNSContext.Res.Extra) < extraLen+totalProofs {
-			newExtra := make([]dns.RR, extraLen, extraLen+totalProofs)
+		totalTxtRecords := 2 + len(proof.Proof) // for saltRR and signatureRR + all proofRecords
+		if cap(waitingReq.response.DNSContext.Res.Extra) < extraLen+totalTxtRecords {
+			newExtra := make([]dns.RR, extraLen, extraLen+totalTxtRecords)
 			copy(newExtra, waitingReq.response.DNSContext.Res.Extra)
 			waitingReq.response.DNSContext.Res.Extra = newExtra
 		}
 
-		for _, proofStep := range proof.Proof {
+		for _, proofRecord := range proof.Proof {
 			// Base64 encoding to ensure the data fits within DNS TXT character restrictions
-			encoded := base64.StdEncoding.EncodeToString(proofStep)
+			encoded := base64.StdEncoding.EncodeToString(proofRecord)
 
 			rr := &dns.TXT{
 				Hdr: dns.RR_Header{Name: waitingReq.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
@@ -278,7 +278,7 @@ func processBatch() {
 			log.Error("DNS response: %s", waitingReq.response.DNSContext.Res.String())
 			// number of extra records is the number of proofs + 2 (for salt and signature)
 			log.Error("Number of extra records: %d", len(waitingReq.response.DNSContext.Res.Extra))
-			continue // TODO: handle this the DNS way by sending a truncated response
+			//continue // TODO: handle this the DNS way by sending a truncated response
 		}
 		waitingReq.notifyCh <- NotificationProcessed
 		close(waitingReq.notifyCh)

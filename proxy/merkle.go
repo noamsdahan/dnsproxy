@@ -268,7 +268,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	}
 	dres := &DNSResponse{
 		DNSContext: d,
-		Salt:       []byte{},
+		Salt:       salt,
 	}
 	dres.Hash, err = dres.CalculateHash()
 	if err != nil {

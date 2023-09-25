@@ -66,7 +66,7 @@ var batchedResponses = &BatchedRequests{
 }
 
 const (
-	batchRequestChanSize  = 16384
+	batchRequestChanSize  = 1024
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
@@ -218,6 +218,14 @@ func processBatch() {
 		}
 		waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, signatureRR)
 
+		extraLen := len(waitingReq.response.DNSContext.Res.Extra)
+		totalProofs := 2 + len(proof.Proof) // for saltRR and signatureRR + all proofSteps
+		if cap(waitingReq.response.DNSContext.Res.Extra) < extraLen+totalProofs {
+			newExtra := make([]dns.RR, extraLen, extraLen+totalProofs)
+			copy(newExtra, waitingReq.response.DNSContext.Res.Extra)
+			waitingReq.response.DNSContext.Res.Extra = newExtra
+		}
+
 		for _, proofStep := range proof.Proof {
 			// Base64 encoding to ensure the data fits within DNS TXT character restrictions
 			encoded := base64.StdEncoding.EncodeToString(proofStep)
@@ -234,7 +242,7 @@ func processBatch() {
 	}
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	batchedResponses.responses = make([]WaitingResponse, 0, batchRequestChanSize) // re-initialize the slice with initial capacity
+	batchedResponses.responses = batchedResponses.responses[:0]
 	batchTimer = nil
 }
 

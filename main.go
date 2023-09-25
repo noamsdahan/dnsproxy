@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	_ "net/http/pprof"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -203,6 +204,7 @@ const (
 )
 
 func main() {
+
 	options := &Options{}
 
 	for _, arg := range os.Args {

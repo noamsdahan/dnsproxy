@@ -267,7 +267,8 @@ func processBatch() {
 	}
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	batchedResponses.responses = batchedResponses.responses[:0]
+	// batchedResponses.responses = batchedResponses.responses[:0]
+	batchedResponses.responses = make([]WaitingResponse, 0, batchSize) // I had to go with this because the above line was throwing off the length checks
 	batchTimer = nil
 }
 

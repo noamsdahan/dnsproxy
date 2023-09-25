@@ -203,6 +203,7 @@ func processBatch() {
 			batchTimer = time.AfterFunc(timeWindow, processBatch)
 		}
 		processingBatch.Unlock()
+		return
 	}
 	// Time to process the batch! The first thing to do is construct the Merkle tree.
 	// For simplicity, we will use the DNSContext as the Content for the Merkle tree.

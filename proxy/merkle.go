@@ -498,6 +498,8 @@ func calculateMerkleRoot(dres *DNSResponse, merklePath [][]byte, indexes []int64
 
 func (dres *DNSResponse) CalculateHash() ([]byte, error) {
 	if dres.Hash != nil {
+		// log the hash
+		log.Debug("Skipped since hash is already calculated. Calculated hash for %s: %x", dres.DNSContext.Req.Question[0].Name, dres.Hash)
 		return dres.Hash, nil
 	}
 
@@ -516,6 +518,10 @@ func (dres *DNSResponse) CalculateHash() ([]byte, error) {
 			return nil, err
 		}
 	}
+	// log the hash
+	log.Debug("Calculated hash for %s: %x", dres.DNSContext.Req.Question[0].Name, h.Sum(nil))
+	// log salt
+	log.Debug("Salt for %s: %x", dres.DNSContext.Req.Question[0].Name, dres.Salt)
 	return h.Sum(nil), nil
 }
 

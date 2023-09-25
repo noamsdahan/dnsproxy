@@ -58,19 +58,20 @@ type MerkleProofB64 struct {
 var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
 
-var batchedRequestsCh = make(chan WaitingResponse, batchRequestChanSize) // trying to change to an unbuffered channel
+var batchedRequestsCh = make(chan WaitingResponse, batchSize*safetyFactor) // trying to change to an unbuffered channel
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedResponses = &BatchedRequests{
-	responses: make([]WaitingResponse, 0, batchRequestChanSize), // initial capacity for better performance
+	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
 }
 
 const (
-	batchRequestChanSize  = 256
+	safetyFactor          = 2
+	batchSize             = 256
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
-	timeWindow            = 80 * time.Millisecond
+	timeWindow            = 20 * time.Millisecond
 )
 
 func init() {
@@ -109,15 +110,30 @@ func StartBatchingProcess() {
 	go func() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
-			waitingRes := <-batchedRequestsCh // Block until a request is received
-			// Lock to ensure only one batch is processed at a time
-			processingBatch.Lock()
+			waitingRes := <-batchedRequestsCh
 
-			if batchTimer == nil { // If the timer is not running, start it
-				batchTimer = time.AfterFunc(timeWindow, processBatch)
+			processingBatch.Lock()
+			batchedResponses.responses = append(batchedResponses.responses, waitingRes)
+			// check if it's larger than the batch size, if so give an error
+			if len(batchedResponses.responses) > batchSize {
+				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, %d", batchSize, len(batchedResponses.responses))
+			}
+			// Check if we've accumulated 256 requests, and if so, process them and reset timer
+			if len(batchedResponses.responses) == batchSize {
+				if batchTimer != nil {
+					batchTimer.Stop()
+					batchTimer = nil
+				}
+				go processBatch()
+			} else if batchTimer == nil {
+				// Start the timer if not running
+				batchTimer = time.AfterFunc(timeWindow, func() {
+					processingBatch.Lock()
+					go processBatch()
+					processingBatch.Unlock()
+				})
 			}
 
-			batchedResponses.responses = append(batchedResponses.responses, waitingRes)
 			processingBatch.Unlock()
 		}
 	}()

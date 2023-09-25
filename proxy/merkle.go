@@ -70,6 +70,7 @@ const (
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
+	timeWindow            = 80 * time.Millisecond
 )
 
 func init() {
@@ -113,14 +114,10 @@ func StartBatchingProcess() {
 			processingBatch.Lock()
 
 			if batchTimer == nil { // If the timer is not running, start it
-				// Start the timer for 80ms
-				log.Debug("[BATCH_PROCESS] Starting timer for 80ms...")
-				batchTimer = time.AfterFunc(80*time.Millisecond, processBatch)
+				batchTimer = time.AfterFunc(timeWindow, processBatch)
 			}
 
-			// Add the request to the batch
 			batchedResponses.responses = append(batchedResponses.responses, waitingRes)
-			// log.Debug("[BATCH_PROCESS] Added request to batch. Total responses in batch: %d\n", len(batchedResponses.responses))
 			processingBatch.Unlock()
 		}
 	}()

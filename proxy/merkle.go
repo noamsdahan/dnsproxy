@@ -114,27 +114,31 @@ func StartBatchingProcess() {
 
 			processingBatch.Lock()
 			batchedResponses.responses = append(batchedResponses.responses, waitingRes)
-			// check if it's larger than the batch size, if so give an error
+			shouldProcess := false
+
+			// Check if it's larger than the batch size, if so give an error
 			if len(batchedResponses.responses) > batchSize {
 				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, %d", batchSize, len(batchedResponses.responses))
 			}
-			// Check if we've accumulated 256 requests, and if so, process them and reset timer
+
+			// Check if we've accumulated enough requests for a batch, and if so, process them and reset timer
 			if len(batchedResponses.responses) >= batchSize {
 				if batchTimer != nil {
 					batchTimer.Stop()
 					batchTimer = nil
 				}
+				shouldProcess = true
+			} else if batchTimer == nil {
+				// Mark that we need to start the timer outside the lock
+				shouldProcess = false
+			}
+			processingBatch.Unlock()
+
+			if shouldProcess {
 				go processBatch()
 			} else if batchTimer == nil {
-				// Start the timer if not running
-				batchTimer = time.AfterFunc(timeWindow, func() {
-					processingBatch.Lock()
-					go processBatch()
-					processingBatch.Unlock()
-				})
+				batchTimer = time.AfterFunc(timeWindow, processBatch)
 			}
-
-			processingBatch.Unlock()
 		}
 	}()
 }
@@ -179,12 +183,23 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 
 func processBatch() {
 	processingBatch.Lock()
-	defer processingBatch.Unlock()
+
+	// Separate out the current batch and reset for the next batch
+	currentBatch := batchedResponses.responses
+	batchedResponses.responses = make([]WaitingResponse, 0, batchSize*safetyFactor)
+
+	// Stop the batch timer if it's running
+	if batchTimer != nil {
+		batchTimer.Stop()
+		batchTimer = nil
+	}
+
+	processingBatch.Unlock()
 
 	// Time to process the batch! The first thing to do is construct the Merkle tree.
 	// For simplicity, we will use the DNSContext as the Content for the Merkle tree.
 	var contents []merkletree.Content
-	for _, waitingReq := range batchedResponses.responses {
+	for _, waitingReq := range currentBatch {
 		contents = append(contents, waitingReq.response)
 		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingReq.response.DNSContext.Req.Question[0].Name)
 	}
@@ -207,7 +222,7 @@ func processBatch() {
 	}
 
 	// Notify all waiting responses of the batch size
-	for _, waitingReq := range batchedResponses.responses {
+	for _, waitingReq := range currentBatch {
 		path, indexes, err := tree.GetMerklePath(waitingReq.response)
 		if err != nil {
 			log.Error("error getting merkle path: %s", err)
@@ -259,7 +274,7 @@ func processBatch() {
 		log.Debug("[BATCH_PROCESS] Last TXT record length: %d\n", len(waitingReq.response.DNSContext.Res.Extra[len(waitingReq.response.DNSContext.Res.Extra)-1].String()))
 		// check that the DNS total length is less than 512 bytes
 		if waitingReq.response.DNSContext.Res.Len() > 512 {
-			log.Error("DNS response exceeds 512 bytes, size is %d, there are %d requests in the batch", waitingReq.response.DNSContext.Res.Len(), len(batchedResponses.responses))
+			log.Error("DNS response exceeds 512 bytes, size is %d, there are %d requests in the batch", waitingReq.response.DNSContext.Res.Len(), len(currentBatch))
 			continue // TODO: handle this the DNS way by sending a truncated response
 		}
 		waitingReq.notifyCh <- NotificationProcessed
@@ -268,8 +283,12 @@ func processBatch() {
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
 	// batchedResponses.responses = batchedResponses.responses[:0]
-	batchedResponses.responses = make([]WaitingResponse, 0, batchSize) // I had to go with this because the above line was throwing off the length checks
-	batchTimer = nil
+	processingBatch.Lock()
+	if batchTimer == nil {
+		batchTimer = time.AfterFunc(timeWindow, processBatch)
+	}
+	processingBatch.Unlock()
+
 }
 
 // MerkleRrResponseHandler verifies the DNS response containing Merkle proof and signatures.

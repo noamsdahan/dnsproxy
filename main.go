@@ -4,6 +4,7 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -43,6 +44,9 @@ type Options struct {
 
 	// Should we write
 	Verbose bool `yaml:"verbose" short:"v" long:"verbose" description:"Verbose output (optional)" optional:"yes" optional-value:"true"`
+
+	// quiet mode
+	Quiet bool `yaml:"quiet" short:"q" long:"quiet" description:"Quiet mode (optional)" optional:"yes" optional-value:"true"`
 
 	// Path to a log file
 	LogOutput string `yaml:"output" short:"o" long:"output" description:"Path to the log file. If not set, write to stdout."`
@@ -249,6 +253,8 @@ func main() {
 func run(options *Options) {
 	if options.Verbose {
 		log.SetLevel(log.DEBUG)
+	} else if options.Quiet {
+		log.SetOutput(io.Discard)
 	}
 	if options.LogOutput != "" {
 		// #nosec G302 -- Trust the file path that is given in the

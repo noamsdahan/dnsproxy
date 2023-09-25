@@ -130,7 +130,7 @@ func StartBatchingProcess() {
 func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
 	if err != nil {
-		log.Error("[BATCH_PROCESS] Error in DNS response: %s\n", err)
+		log.Debug("[BATCH_PROCESS] Error in DNS response: %s\n", err) // TODO: consider changing back to error
 		return
 	}
 
@@ -251,7 +251,7 @@ func processBatch() {
 // and finally verifies the signature using a known public key.
 func MerkleRrResponseHandler(d *DNSContext, err error) {
 	if err != nil {
-		log.Error("Error in DNS response: %s", err)
+		log.Debug("Error in DNS response: %s", err) // TODO: consider changing back to error
 		return
 	}
 	// log the request

@@ -348,7 +348,12 @@ func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 		}
 		merkleDataParts = append(merkleDataParts, bytesPart)
 	}
-
+	// log the decoded values
+	log.Debug("Salt: %x", saltBytes)
+	log.Debug("Signature: %x", signatureBytes)
+	for _, part := range merkleDataParts {
+		log.Debug("Merkle proof part: %x", part)
+	}
 	return saltBytes, signatureBytes, merkleDataParts, nil
 }
 

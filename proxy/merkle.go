@@ -236,7 +236,11 @@ func processBatch() {
 			}
 			waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, rr)
 		}
-
+		// check that the DNS total length is less than 512 bytes
+		if waitingReq.response.DNSContext.Res.Len() > 512 {
+			log.Error("DNS response exceeds 512 bytes")
+			continue
+		}
 		waitingReq.notifyCh <- NotificationProcessed
 		close(waitingReq.notifyCh)
 	}

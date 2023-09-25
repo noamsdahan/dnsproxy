@@ -58,7 +58,7 @@ type MerkleProofB64 struct {
 var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
 
-var batchedRequestsCh = make(chan WaitingResponse) // trying to change to an unbuffered channel
+var batchedRequestsCh = make(chan WaitingResponse, batchRequestChanSize) // trying to change to an unbuffered channel
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedResponses = &BatchedRequests{
@@ -66,7 +66,7 @@ var batchedResponses = &BatchedRequests{
 }
 
 const (
-	batchRequestChanSize  = 1024
+	batchRequestChanSize  = 65536
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4

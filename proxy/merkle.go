@@ -68,7 +68,7 @@ var batchedResponses = &BatchedRequests{
 
 const (
 	safetyFactor          = 2
-	batchSize             = 256
+	batchSize             = 128
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4

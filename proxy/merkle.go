@@ -18,6 +18,7 @@ import (
 	"hash"
 	"math/big"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -72,6 +73,7 @@ const (
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
 	timeWindow            = 20 * time.Millisecond
+	maxEncodedLength      = 255
 )
 
 func init() {
@@ -244,35 +246,34 @@ func processBatch() {
 			continue
 		}
 		// Encode the Merkle proof to base64
-		// Attach Salt
-		saltRR := &dns.TXT{
-			Hdr: dns.RR_Header{Name: waitingReq.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{base64.StdEncoding.EncodeToString(waitingReq.response.Salt)},
-		}
-		waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, saltRR)
+		// List to store all encoded data: salt, signature, and proofs
+		var allEncodedData []string
 
-		// Attach the signature
-		signatureRR := &dns.TXT{
-			Hdr: dns.RR_Header{Name: waitingReq.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-			Txt: []string{base64.StdEncoding.EncodeToString(proof.Signature)},
+		// Encode salt and signature
+		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(waitingReq.response.Salt))
+		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proof.Signature))
+
+		// Add the encoded proofs
+		for _, proofRecord := range proof.Proof {
+			// Base64 encoding to ensure the data fits within DNS TXT character restrictions
+			allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proofRecord))
 		}
-		waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, signatureRR)
+
+		// Efficiently partition the encoded data among the TXT records
+		packedData := packStringsForTxtRecord(allEncodedData)
 
 		extraLen := len(waitingReq.response.DNSContext.Res.Extra)
-		totalTxtRecords := 2 + len(proof.Proof) // for saltRR and signatureRR + all proofRecords
+		totalTxtRecords := len(packedData)
 		if cap(waitingReq.response.DNSContext.Res.Extra) < extraLen+totalTxtRecords {
 			newExtra := make([]dns.RR, extraLen, extraLen+totalTxtRecords)
 			copy(newExtra, waitingReq.response.DNSContext.Res.Extra)
 			waitingReq.response.DNSContext.Res.Extra = newExtra
 		}
 
-		for _, proofRecord := range proof.Proof {
-			// Base64 encoding to ensure the data fits within DNS TXT character restrictions
-			encoded := base64.StdEncoding.EncodeToString(proofRecord)
-
+		for _, packed := range packedData {
 			rr := &dns.TXT{
 				Hdr: dns.RR_Header{Name: waitingReq.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-				Txt: []string{encoded},
+				Txt: []string{packed},
 			}
 			waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, rr)
 		}
@@ -367,25 +368,26 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 }
 
 func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
-	var salt, signature string
-	var serializedMerkleDataParts []string
-
+	// Get all TXT record data
+	var packedData []string
 	for _, rr := range extra {
 		if txt, ok := rr.(*dns.TXT); ok {
-			switch {
-			case salt == "":
-				salt = txt.Txt[0]
-			case signature == "":
-				signature = txt.Txt[0]
-			default:
-				serializedMerkleDataParts = append(serializedMerkleDataParts, txt.Txt[0])
-			}
+			packedData = append(packedData, txt.Txt[0])
 		}
 	}
 
-	if salt == "" || signature == "" || len(serializedMerkleDataParts) == 0 {
+	// Unpack the data
+	unpackedData := splitConcatenatedBase64(packedData)
+
+	if len(unpackedData) < 2 {
 		return nil, nil, nil, fmt.Errorf("salt, signature, or proof not found in DNS response")
 	}
+
+	// Extract salt and signature
+	salt, signature := unpackedData[0], unpackedData[1]
+
+	// The remaining data after salt and signature are the proofs
+	serializedMerkleDataParts := unpackedData[2:]
 
 	// Log values in their base64 encoded form for debugging
 	log.Debug("Salt: %s", salt)
@@ -394,7 +396,7 @@ func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 		log.Debug("Merkle proof part: %s", part)
 	}
 
-	// Decode the merkle root and signature from base64
+	// Decode the salt and signature from base64
 	saltBytes, err := base64.StdEncoding.DecodeString(salt)
 	if err != nil {
 		return nil, nil, nil, err
@@ -413,6 +415,7 @@ func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 		}
 		merkleDataParts = append(merkleDataParts, bytesPart)
 	}
+
 	// log the decoded values
 	log.Debug("Salt Bytes: %x", saltBytes)
 	log.Debug("Signature Bytes: %x", signatureBytes)
@@ -647,7 +650,7 @@ func deserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 	// First record is for indexes
 	indexDecoder := gob.NewDecoder(bytes.NewBuffer(records[0]))
 	if err := indexDecoder.Decode(&indexes); err != nil {
-		return nil, nil, fmt.Errorf("Error deserializing Merkle indexes: %s", err)
+		return nil, nil, fmt.Errorf("error deserializing Merkle indexes: %s", err)
 	}
 
 	// Subsequent records are for the hashes
@@ -655,10 +658,74 @@ func deserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 		var chunk [][]byte
 		hashDecoder := gob.NewDecoder(bytes.NewBuffer(record))
 		if err := hashDecoder.Decode(&chunk); err != nil {
-			return nil, nil, fmt.Errorf("Error deserializing Merkle path: %s", err)
+			return nil, nil, fmt.Errorf("error deserializing Merkle path: %s", err)
 		}
 		path = append(path, chunk...)
 	}
 
 	return path, indexes, nil
+}
+
+func packStringsForTxtRecord(strs []string) []string {
+	result := make([]string, 0)
+	buffer := ""
+	carryOver := ""
+
+	for _, str := range strs {
+		str = carryOver + str
+
+		for len(str) > 0 {
+			spaceLeft := maxEncodedLength - len(buffer)
+			if len(str) <= spaceLeft {
+				buffer += str + ":"
+				str = ""
+			} else {
+				buffer += str[:spaceLeft]
+				str = str[spaceLeft:]
+			}
+
+			if len(buffer) == maxEncodedLength {
+				result = append(result, buffer)
+				buffer = ""
+			}
+		}
+
+		carryOver = str
+	}
+
+	if buffer != "" {
+		result = append(result, buffer)
+	}
+
+	return result
+}
+
+func splitConcatenatedBase64(packedStrings []string) []string {
+	allStrings := make([]string, 0)
+	carryOver := ""
+
+	for _, packed := range packedStrings {
+		if strings.HasSuffix(packed, ":") {
+			parts := strings.Split(packed, ":")
+			parts[0] = carryOver + parts[0]
+			carryOver = ""
+
+			allStrings = append(allStrings, parts[:len(parts)-1]...)
+		} else {
+			parts := strings.Split(packed, ":")
+			if len(parts) > 1 {
+				parts[0] = carryOver + parts[0]
+				allStrings = append(allStrings, parts[:len(parts)-1]...)
+				carryOver = parts[len(parts)-1]
+			} else {
+				carryOver += parts[0]
+			}
+		}
+	}
+
+	if carryOver != "" {
+		allStrings = append(allStrings, carryOver)
+	}
+
+	return allStrings
 }

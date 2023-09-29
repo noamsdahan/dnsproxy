@@ -68,7 +68,7 @@ var batchedResponses = &BatchedRequests{
 
 const (
 	safetyFactor          = 2
-	batchSize             = 128
+	batchSize             = 256
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
@@ -157,7 +157,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	}
 
 	// generate a salt of 128 bits
-	salt := make([]byte, 16)
+	salt := make([]byte, 1)
 	_, err = rand.Read(salt)
 
 	// Create a new DNSResponse struct

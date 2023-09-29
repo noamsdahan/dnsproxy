@@ -156,8 +156,8 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		return
 	}
 
-	// generate a salt of 256 bits
-	salt := make([]byte, 32)
+	// generate a salt of 128 bits
+	salt := make([]byte, 16)
 	_, err = rand.Read(salt)
 
 	// Create a new DNSResponse struct

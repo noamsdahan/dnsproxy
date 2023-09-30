@@ -105,14 +105,6 @@ func init() {
 	} else {
 		log.Info("Successfully loaded public key from file.")
 	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	go func() {
-		for range ticker.C {
-			log.Info("Channel length: %d, capacity: %d", len(batchedResponsesCh), cap(batchedResponsesCh))
-		}
-	}()
 
 }
 
@@ -145,15 +137,24 @@ func handleBatch() {
 // 3. When a request is received, it is added to the batch.
 // 4. When the timer expires, it processes the batch.
 func StartBatchingProcess() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	go func() {
+		for range ticker.C {
+			log.Info("Channel length: %d, capacity: %d", len(batchedResponsesCh), cap(batchedResponsesCh))
+		}
+	}()
+
 	go func() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
 			waitingRes := <-batchedResponsesCh
-			log.Info("[BATCH_PROCESS] Received response, locking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
+			//log.Info("[BATCH_PROCESS] Received response, locking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
 			collectingMutex.Lock()
-			log.Info("collecting mutex locked")
+			//log.Info("collecting mutex locked")
 			collectingResponses.responses = append(collectingResponses.responses, waitingRes)
-			log.Info("[BATCH_PROCESS] unlocking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
+			//log.Info("[BATCH_PROCESS] unlocking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
 			collectingMutex.Unlock()
 			shouldProcess := false
 
@@ -215,7 +216,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		return
 	}
 	responseEnd := time.Now()
-	log.Info("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
+	log.Debug("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
 }
 
 func swapBuffers() {

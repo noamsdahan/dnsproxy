@@ -105,6 +105,15 @@ func init() {
 	} else {
 		log.Info("Successfully loaded public key from file.")
 	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	go func() {
+		for range ticker.C {
+			log.Info("Channel length: %d, capacity: %d", len(batchedResponsesCh), cap(batchedResponsesCh))
+		}
+	}()
+
 }
 
 func handleBatch() {
@@ -212,7 +221,10 @@ func swapBuffers() {
 }
 
 func processBatch() {
+	batchId := time.Now().UnixNano()
+	log.Info("[BATCH_PROCESS] Processing batch %d... attempting to lock mutex", batchId)
 	processingMutex.Lock()
+	log.Info("[BATCH_PROCESS] Processing batch %d... mutex locked", batchId)
 	defer processingMutex.Unlock()
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {
@@ -280,6 +292,7 @@ func processBatch() {
 		close(waitingRes.notifyCh)
 	}
 	processingResponses.responses = processingResponses.responses[:0]
+	log.Info("[BATCH_PROCESS] Batch %d processed", batchId)
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {

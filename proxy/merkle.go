@@ -238,9 +238,9 @@ func swapBuffers() {
 
 func processBatch() {
 	batchId := time.Now().UnixNano()
-	log.Debug("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
+	log.Info("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
 	processingMutex.Lock()
-	log.Debug("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
+	log.Info("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
 	defer processingMutex.Unlock()
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {
@@ -267,6 +267,7 @@ func processBatch() {
 	// Notify all waiting responses of the batch size
 	for _, waitingRes := range processingResponses.responses {
 		if waitingRes.processed {
+			log.Error("response already processed")
 			continue
 		}
 		waitingRes.processed = true
@@ -301,14 +302,14 @@ func processBatch() {
 		// TODO: handle oversized responses, truncate, separate TCP & UDP, all for next time
 		// check that the DNS total length is less than 512 bytes if the protocol is UDP
 		if waitingRes.response.DNSContext.Res.Len() > maxDnsUdpSize && maxUdpSizeCheck {
-			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingRes.response.DNSContext.Res.Len(), len(processingResponses.responses))
+			log.Error("error: DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingRes.response.DNSContext.Res.Len(), len(processingResponses.responses))
 			waitingRes.response.DNSContext.Res.Truncated = true
 		}
 		waitingRes.notifyCh <- NotificationProcessed
 		close(waitingRes.notifyCh)
 	}
 	processingResponses.responses = processingResponses.responses[:0]
-	log.Debug("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
+	log.Info("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {
@@ -646,24 +647,27 @@ func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 }
 
 func SerializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
-	var serializedData [][]byte
+	// Preallocate serializedData slice
+	serializedData := make([][]byte, len(path)+1)
+
+	// Use a single buffer and encoder for the entire serialization process
+	buf := new(bytes.Buffer)
+	encoder := gob.NewEncoder(buf)
 
 	// 1. Serialize indexes
-	indexBuffer := new(bytes.Buffer)
-	indexEncoder := gob.NewEncoder(indexBuffer)
-	if err := indexEncoder.Encode(indexes); err != nil {
+	if err := encoder.Encode(indexes); err != nil {
 		return nil, err
 	}
-	serializedData = append(serializedData, indexBuffer.Bytes())
+	serializedData[0] = buf.Bytes()
+	buf.Reset() // Clear the buffer for the next serialization
 
 	// 2. Serialize each individual hash in the path
-	for _, hash := range path {
-		hashBuffer := new(bytes.Buffer)
-		hashEncoder := gob.NewEncoder(hashBuffer)
-		if err := hashEncoder.Encode(hash); err != nil {
+	for i, stepHash := range path {
+		if err := encoder.Encode(stepHash); err != nil {
 			return nil, err
 		}
-		serializedData = append(serializedData, hashBuffer.Bytes())
+		serializedData[i+1] = buf.Bytes()
+		buf.Reset() // Clear the buffer for the next serialization
 	}
 
 	return serializedData, nil

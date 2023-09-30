@@ -75,7 +75,7 @@ const (
 	batchSize             = 65535
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
-	timeWindow            = 5 * time.Millisecond
+	timeWindow            = 120 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 512
 	saltBits              = 128

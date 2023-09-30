@@ -58,7 +58,8 @@ type MerkleProofB64 struct {
 // Assuming you have the private key and public key for ecdsa
 var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
-
+var responsesReceived = 0
+var responsesProcessed = 0
 var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor)
 var collectingMutex sync.Mutex
 var processingMutex sync.Mutex
@@ -182,6 +183,11 @@ func StartBatchingProcess() {
 // it adds the response to the batch and waits for the batch to be processed.
 // After the batch is processed, it updates the response with the Merkle proof.
 func MerkleAnsResponseHandler(d *DNSContext, err error) {
+	// increment responses received
+	responsesReceived++
+	// log number of responses received
+	log.Debug("[MerkleAns]: Responses received: %d", responsesReceived)
+	log.Info("[MerkleAns]: pocResponseHandler called for %s", d.Req.Question[0].Name)
 	responseTime := time.Now()
 	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
 	if err != nil {
@@ -216,6 +222,10 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		return
 	}
 	responseEnd := time.Now()
+	// increment responses processed
+	responsesProcessed++
+	// log number of responses processed
+	log.Debug("[MerkleAns]: Responses processed: %d", responsesProcessed)
 	log.Debug("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
 }
 
@@ -332,6 +342,7 @@ func encodeProofB64(salt []byte, proof *MerkleProof) []string {
 // It first extracts the proof and signature, then recreates the Merkle root from the proof,
 // and finally verifies the signature using a known public key.
 func MerkleRrResponseHandler(d *DNSContext, err error) {
+
 	if err != nil {
 		log.Debug("Error in DNS response: %s", err) // TODO: consider changing back to error
 		return

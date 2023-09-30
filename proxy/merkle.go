@@ -202,7 +202,6 @@ func processBatch() {
 	processingBatch.Unlock()
 	// if the batch is empty, return
 	if len(currentBatch) == 0 {
-		log.Debug("[BATCH_PROCESS] Batch is empty. Returning.")
 		processingBatch.Lock()
 		if batchTimer == nil {
 			batchTimer = time.AfterFunc(timeWindow, processBatch)

@@ -110,21 +110,21 @@ func init() {
 }
 
 func handleBatch() {
-	log.Info("[BATCH_PROCESS] Handling batch... locking collecting mutex")
+	log.Debug("[BATCH_PROCESS] Handling batch... locking collecting mutex")
 	collectingMutex.Lock()
-	log.Info("[BATCH_PROCESS] Handling batch... locking processing mutex")
+	log.Debug("[BATCH_PROCESS] Handling batch... locking processing mutex")
 	processingMutex.Lock()
 	swapBuffers()
 
 	if batchTimer != nil {
-		log.Info("[BATCH_PROCESS] handleBatch: stopping timer")
+		log.Debug("[BATCH_PROCESS] handleBatch: stopping timer")
 		batchTimer.Stop()
 		batchTimer = nil
 	}
 
-	log.Info("[BATCH_PROCESS] handleBatch: unlocking processing mutex")
+	log.Debug("[BATCH_PROCESS] handleBatch: unlocking processing mutex")
 	processingMutex.Unlock()
-	log.Info("[BATCH_PROCESS] handleBatch: unlocking collecting mutex")
+	log.Debug("[BATCH_PROCESS] handleBatch: unlocking collecting mutex")
 	collectingMutex.Unlock()
 
 	go processBatch()
@@ -141,7 +141,7 @@ func StartBatchingProcess() {
 	ticker := time.NewTicker(time.Second)
 
 	go func() {
-		log.Info("Ticker goroutine started.")
+		log.Debug("Ticker goroutine started.")
 		for range ticker.C {
 			log.Info("Channel length: %d, capacity: %d", len(batchedResponsesCh), cap(batchedResponsesCh))
 		}
@@ -151,11 +151,11 @@ func StartBatchingProcess() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
 			waitingRes := <-batchedResponsesCh
-			//log.Info("[BATCH_PROCESS] Received response, locking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
+			//log.Debug("[BATCH_PROCESS] Received response, locking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
 			collectingMutex.Lock()
-			//log.Info("collecting mutex locked")
+			//log.Debug("collecting mutex locked")
 			collectingResponses.responses = append(collectingResponses.responses, waitingRes)
-			//log.Info("[BATCH_PROCESS] unlocking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
+			//log.Debug("[BATCH_PROCESS] unlocking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
 			collectingMutex.Unlock()
 			shouldProcess := false
 
@@ -186,7 +186,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	// increment responses received
 	responsesReceived++
 	// log number of responses received
-	log.Info("[MerkleAns]: Responses received: %d", responsesReceived)
+	log.Debug("[MerkleAns]: Responses received: %d", responsesReceived)
 	responseTime := time.Now()
 	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
 	if err != nil {
@@ -224,7 +224,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	// increment responses processed
 	responsesProcessed++
 	// log number of responses processed
-	log.Info("[MerkleAns]: Responses processed: %d", responsesProcessed)
+	log.Debug("[MerkleAns]: Responses processed: %d", responsesProcessed)
 	log.Debug("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
 }
 
@@ -238,9 +238,9 @@ func swapBuffers() {
 
 func processBatch() {
 	batchId := time.Now().UnixNano()
-	log.Info("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
+	log.Debug("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
 	processingMutex.Lock()
-	log.Info("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
+	log.Debug("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
 	defer processingMutex.Unlock()
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {
@@ -308,7 +308,7 @@ func processBatch() {
 		close(waitingRes.notifyCh)
 	}
 	processingResponses.responses = processingResponses.responses[:0]
-	log.Info("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
+	log.Debug("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {

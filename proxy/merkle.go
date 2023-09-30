@@ -656,29 +656,25 @@ func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 
 	return bytes.Equal(dres.Hash, otherContent.Hash), nil
 }
-
 func SerializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
-	// Preallocate serializedData slice
 	serializedData := make([][]byte, len(path)+1)
 
-	// Use a single buffer and encoder for the entire serialization process
-	buf := new(bytes.Buffer)
-	encoder := gob.NewEncoder(buf)
-
-	// 1. Serialize indexes
-	if err := encoder.Encode(indexes); err != nil {
+	// 1. Serialize indexes directly into serializedData[0]
+	indexBuf := new(bytes.Buffer)
+	indexEncoder := gob.NewEncoder(indexBuf)
+	if err := indexEncoder.Encode(indexes); err != nil {
 		return nil, err
 	}
-	serializedData[0] = buf.Bytes()
-	buf.Reset() // Clear the buffer for the next serialization
+	serializedData[0] = indexBuf.Bytes()
 
-	// 2. Serialize each individual hash in the path
+	// 2. Serialize each individual hash in the path directly into serializedData
 	for i, stepHash := range path {
-		if err := encoder.Encode(stepHash); err != nil {
+		hashBuf := new(bytes.Buffer)
+		hashEncoder := gob.NewEncoder(hashBuf)
+		if err := hashEncoder.Encode(stepHash); err != nil {
 			return nil, err
 		}
-		serializedData[i+1] = buf.Bytes()
-		buf.Reset() // Clear the buffer for the next serialization
+		serializedData[i+1] = hashBuf.Bytes()
 	}
 
 	return serializedData, nil

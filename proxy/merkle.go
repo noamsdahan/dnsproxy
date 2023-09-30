@@ -186,8 +186,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	// increment responses received
 	responsesReceived++
 	// log number of responses received
-	log.Debug("[MerkleAns]: Responses received: %d", responsesReceived)
-	log.Info("[MerkleAns]: pocResponseHandler called for %s", d.Req.Question[0].Name)
+	log.Info("[MerkleAns]: Responses received: %d", responsesReceived)
 	responseTime := time.Now()
 	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
 	if err != nil {

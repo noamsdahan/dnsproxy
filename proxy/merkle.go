@@ -323,7 +323,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	// Extract the Merkle root, signature, and serialized proof from TXT records
 	salt, signature, merkleProofSerialized, err := extractTXTData(d.Res.Extra)
 	if err != nil {
-		log.Error("Error extracting Merkle root, signature, and proof from DNS response: %s", err)
+		log.Error("Error extracting Merkle root, signature, and proof from DNS response: %s. %s", err, d.Res.Extra)
 		return
 	}
 

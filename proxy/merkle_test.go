@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"github.com/miekg/dns"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -51,7 +52,7 @@ func TestPackAndSplit(t *testing.T) {
 	_, _, strs, _ := generateSampleData()
 
 	packed := PackStringsForTxtRecord(strs)
-	split := SplitConcatenatedBase64(packed)
+	split := SplitConcatenatedBase64(strings.Join(packed, ""))
 
 	if !reflect.DeepEqual(strs, split) {
 		t.Errorf("Original and split strings do not match")

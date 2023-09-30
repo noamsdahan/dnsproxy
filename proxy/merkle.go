@@ -385,8 +385,7 @@ func ExtractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 		}
 	}
 
-	// Unpack the data
-	unpackedData := SplitConcatenatedBase64(packedData)
+	unpackedData := SplitConcatenatedBase64(strings.Join(packedData, ""))
 
 	if len(unpackedData) < 2 {
 		return nil, nil, nil, fmt.Errorf("salt, signature, or proof not found in DNS response")
@@ -704,33 +703,17 @@ func PackStringsForTxtRecord(strs []string) []string {
 
 	return result
 }
+func SplitConcatenatedBase64(packedDataString string) []string {
+	// Splitting the concatenated data by colon
+	allParts := strings.Split(packedDataString, ":")
 
-func SplitConcatenatedBase64(packedStrings []string) []string {
-	allStrings := make([]string, 0)
-	carryOver := ""
-
-	for _, packed := range packedStrings {
-		if strings.HasSuffix(packed, ":") {
-			parts := strings.Split(packed, ":")
-			parts[0] = carryOver + parts[0]
-			carryOver = ""
-
-			allStrings = append(allStrings, parts[:len(parts)-1]...)
-		} else {
-			parts := strings.Split(packed, ":")
-			if len(parts) > 1 {
-				parts[0] = carryOver + parts[0]
-				allStrings = append(allStrings, parts[:len(parts)-1]...)
-				carryOver = parts[len(parts)-1]
-			} else {
-				carryOver += parts[0]
-			}
+	// Filtering out any potential empty strings due to trailing colons
+	filteredParts := make([]string, 0, len(allParts))
+	for _, part := range allParts {
+		if part != "" {
+			filteredParts = append(filteredParts, part)
 		}
 	}
 
-	if carryOver != "" {
-		allStrings = append(allStrings, carryOver)
-	}
-
-	return allStrings
+	return filteredParts
 }

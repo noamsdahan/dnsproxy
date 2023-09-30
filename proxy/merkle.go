@@ -124,6 +124,7 @@ func handleBatch() {
 	swapBuffers()
 
 	if batchTimer != nil {
+		log.Info("[BATCH_PROCESS] handleBatch: stopping timer")
 		batchTimer.Stop()
 		batchTimer = nil
 	}
@@ -166,6 +167,7 @@ func StartBatchingProcess() {
 			if shouldProcess {
 				handleBatch()
 			} else if batchTimer == nil {
+				log.Info("[BATCH_PROCESS] StartBatchingProcess Starting timer")
 				batchTimer = time.AfterFunc(timeWindow, handleBatch)
 			}
 		}
@@ -217,12 +219,6 @@ func swapBuffers() {
 	// Swap the buffers
 	collectingResponses, processingResponses = processingResponses, collectingResponses
 	collectingResponses.responses = collectingResponses.responses[:0]
-
-	// Stop the batch timer if it's running
-	if batchTimer != nil {
-		batchTimer.Stop()
-		batchTimer = nil
-	}
 }
 
 func processBatch() {

@@ -78,9 +78,9 @@ const (
 	NotificationProcessed = 0
 	timeWindow            = 120 * time.Millisecond
 	maxEncodedLength      = 255
-	maxDnsUdpSize         = 512
+	maxDnsUdpSize         = 4096
 	saltBits              = 128
-	maxUdpSizeCheck       = false
+	maxUdpSizeCheck       = true
 )
 
 func init() {
@@ -117,7 +117,7 @@ func handleBatch() {
 	swapBuffers()
 
 	if batchTimer != nil {
-		log.Debug("[BATCH_PROCESS] handleBatch: stopping timer")
+		log.Info("[BATCH_PROCESS] handleBatch: stopping timer")
 		batchTimer.Stop()
 		batchTimer = nil
 	}

@@ -224,7 +224,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	// increment responses processed
 	responsesProcessed++
 	// log number of responses processed
-	log.Debug("[MerkleAns]: Responses processed: %d", responsesProcessed)
+	log.Info("[MerkleAns]: Responses processed: %d", responsesProcessed)
 	log.Debug("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
 }
 

@@ -181,6 +181,7 @@ func StartBatchingProcess() {
 // it adds the response to the batch and waits for the batch to be processed.
 // After the batch is processed, it updates the response with the Merkle proof.
 func MerkleAnsResponseHandler(d *DNSContext, err error) {
+	responseTime := time.Now()
 	log.Debug("[BATCH_PROCESS] pocResponseHandler called for %s\n", d.Req.Question[0].Name)
 	if err != nil {
 		log.Debug("[BATCH_PROCESS] Error in DNS response: %s\n", err) // TODO: consider changing back to error
@@ -213,6 +214,8 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		log.Error("[BATCH_PROCESS] Error processing batch: %d\n", errCode)
 		return
 	}
+	responseEnd := time.Now()
+	log.Info("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
 }
 
 func swapBuffers() {

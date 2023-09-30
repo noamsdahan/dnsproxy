@@ -49,13 +49,40 @@ func TestSerializationAndDeserialization(t *testing.T) {
 }
 
 func TestPackAndSplit(t *testing.T) {
-	_, _, strs, _ := generateSampleData()
+	// generate random proof
+	//random hash
+	proof := &MerkleProof{
+		Signature: []byte(generateRandomBytes(hashSize)),
+		Proof: [][]byte{
+			// random hash
+			[]byte(generateRandomBytes(hashSize)),
+			[]byte(generateRandomBytes(hashSize)),
+			[]byte(generateRandomBytes(hashSize)),
+		},
+	}
 
-	packed := PackStringsForTxtRecord(strs)
-	split := SplitConcatenatedBase64(strings.Join(packed, ""))
+	// generate random salt of 128 bits
+	salt := generateRandomBytes(16)
+	allEncodedData := encodeProofB64(salt, proof)
+	packedData := PackStringsForTxtRecord(allEncodedData)
+	split := SplitConcatenatedBase64(strings.Join(packedData, ""))
+	if len(split) != 5 {
+		t.Errorf("Split string does not have the correct number of parts")
+	}
+	salt_recieved, signature := split[0], split[1]
 
-	if !reflect.DeepEqual(strs, split) {
-		t.Errorf("Original and split strings do not match")
+	// The remaining data after salt and signature are the proofs
+	serializedMerkleDataParts := split[2:]
+	if salt_recieved != base64.StdEncoding.EncodeToString(salt) {
+		t.Errorf("Salt does not match")
+	}
+	if signature != base64.StdEncoding.EncodeToString(proof.Signature) {
+		t.Errorf("Signature does not match")
+	}
+	for i, part := range serializedMerkleDataParts {
+		if part != base64.StdEncoding.EncodeToString(proof.Proof[i]) {
+			t.Errorf("Proof part %d does not match", i)
+		}
 	}
 }
 
@@ -86,35 +113,27 @@ func TestEndToEndTXTRecordProcessing(t *testing.T) {
 	for i := range originalIndexes {
 		originalIndexes[i] = int64(i + 1)
 	}
-
+	proofOriginal := &MerkleProof{
+		Signature: originalSignature,
+	}
 	// 2. Serialize the proof path and indexes
-	serializedPath, err := SerializePathAndIndexes(originalPath, originalIndexes)
+	var err error
+	proofOriginal.Proof, err = SerializePathAndIndexes(originalPath, originalIndexes)
 	if err != nil {
 		t.Fatalf("Error in SerializePathAndIndexes: %s", err)
 	}
 
 	// 3. Base64 encode all the generated data
-	encodedSalt := base64.StdEncoding.EncodeToString(originalSalt)
-	encodedSignature := base64.StdEncoding.EncodeToString(originalSignature)
-	encodedProofParts := make([]string, len(serializedPath))
-	for i, part := range serializedPath {
-		encodedProofParts[i] = base64.StdEncoding.EncodeToString(part)
-	}
 
 	// 4. Pack them into TXT records
-	allEncodedStrings := append([]string{encodedSalt, encodedSignature}, encodedProofParts...)
-	packedForTXT := PackStringsForTxtRecord(allEncodedStrings)
-	txtRRs := make([]dns.RR, len(packedForTXT))
-	for i, packedData := range packedForTXT {
-		txtRRs[i] = &dns.TXT{
-			Txt: []string{packedData},
-		}
-	}
+	allEncodedData := encodeProofB64(originalSalt, proofOriginal)
+	packedForTXT := PackStringsForTxtRecord(allEncodedData)
+	txtRRs := CreateTxtRecordsForPackedData("example.com", packedForTXT)
 
 	// 5. Extract the data from TXT records
 	extractedSalt, extractedSignature, extractedProofSerialized, err := ExtractTXTData(txtRRs)
 	if err != nil {
-		t.Fatalf("Error in ExtractTXTData: %s", err)
+		t.Fatalf("Error in ExtractTXTData: %s. txtRRs: %+v", err, txtRRs)
 	}
 
 	// 6. Decode and deserialize the data

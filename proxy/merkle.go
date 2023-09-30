@@ -44,9 +44,8 @@ type BatchedRequests struct {
 }
 
 type MerkleProof struct {
-	MerkleRoot []byte
-	Signature  []byte
-	Proof      [][]byte
+	Signature []byte
+	Proof     [][]byte
 }
 
 type MerkleProofB64 struct {
@@ -227,8 +226,7 @@ func processBatch() {
 	}
 
 	// Sign the Merkle root
-	proof.MerkleRoot = []byte(tree.MerkleRoot())
-	proof.Signature, err = createSignature(proof.MerkleRoot)
+	proof.Signature, err = createSignature([]byte(tree.MerkleRoot()))
 	if err != nil {
 		log.Error("error signing merkle root: %s", err)
 		return
@@ -248,10 +246,23 @@ func processBatch() {
 			continue
 		}
 
-		allEncodedData := encodeProofB64(&waitingRes, proof)
+		allEncodedData := encodeProofB64(waitingRes.response.Salt, proof)
 		packedData := PackStringsForTxtRecord(allEncodedData)
 
-		AppendPackedDataAsTxtRecords(waitingRes, packedData)
+		// Assuming `waitingRes` and `packedData` are defined earlier in your code
+		newTxtRecords := CreateTxtRecordsForPackedData(waitingRes.response.DNSContext.Req.Question[0].Name, packedData)
+
+		// Check capacity and expand if necessary
+		extraLen := len(waitingRes.response.DNSContext.Res.Extra)
+		totalTxtRecords := len(newTxtRecords)
+		if cap(waitingRes.response.DNSContext.Res.Extra) < extraLen+totalTxtRecords {
+			newExtra := make([]dns.RR, extraLen, extraLen+totalTxtRecords)
+			copy(newExtra, waitingRes.response.DNSContext.Res.Extra)
+			waitingRes.response.DNSContext.Res.Extra = newExtra
+		}
+
+		// Append the new TXT records
+		waitingRes.response.DNSContext.Res.Extra = append(waitingRes.response.DNSContext.Res.Extra, newTxtRecords...)
 
 		// log the response size
 		log.Debug("[BATCH_PROCESS] Response size: %d\n", waitingRes.response.DNSContext.Res.Len())
@@ -282,29 +293,23 @@ func processBatch() {
 
 }
 
-func AppendPackedDataAsTxtRecords(waitingRes WaitingResponse, packedData []string) {
-	extraLen := len(waitingRes.response.DNSContext.Res.Extra)
-	totalTxtRecords := len(packedData)
-	if cap(waitingRes.response.DNSContext.Res.Extra) < extraLen+totalTxtRecords {
-		newExtra := make([]dns.RR, extraLen, extraLen+totalTxtRecords)
-		copy(newExtra, waitingRes.response.DNSContext.Res.Extra)
-		waitingRes.response.DNSContext.Res.Extra = newExtra
-	}
-
+func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {
+	var txtRecords []dns.RR
 	for _, packed := range packedData {
 		rr := &dns.TXT{
-			Hdr: dns.RR_Header{Name: waitingRes.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
+			Hdr: dns.RR_Header{Name: domain, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
 			Txt: []string{packed},
 		}
-		waitingRes.response.DNSContext.Res.Extra = append(waitingRes.response.DNSContext.Res.Extra, rr)
+		txtRecords = append(txtRecords, rr)
 	}
+	return txtRecords
 }
 
-func encodeProofB64(waitingRes *WaitingResponse, proof *MerkleProof) []string {
+func encodeProofB64(salt []byte, proof *MerkleProof) []string {
 	var allEncodedData []string
 
 	// Encode salt and signature with colons
-	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(waitingRes.response.Salt)+":")
+	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(salt)+":")
 	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proof.Signature)+":")
 
 	// Add the encoded proofs with colons

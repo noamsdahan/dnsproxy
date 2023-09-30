@@ -70,6 +70,7 @@ var collectingResponses = &BatchedResponses{
 var processingResponses = &BatchedResponses{
 	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
 }
+var longestTime = 0 * time.Millisecond
 
 const (
 	safetyFactor          = 2
@@ -183,6 +184,7 @@ func StartBatchingProcess() {
 // it adds the response to the batch and waits for the batch to be processed.
 // After the batch is processed, it updates the response with the Merkle proof.
 func MerkleAnsResponseHandler(d *DNSContext, err error) {
+
 	// increment responses received
 	responsesReceived++
 	// log number of responses received
@@ -226,6 +228,10 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	// log number of responses processed
 	log.Debug("[MerkleAns]: Responses processed: %d", responsesProcessed)
 	log.Debug("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
+	if responseEnd.Sub(responseTime) > longestTime {
+		longestTime = responseEnd.Sub(responseTime)
+		log.Info("[BATCH_PROCESS] Longest response time so far: %d\n", longestTime)
+	}
 }
 
 func swapBuffers() {

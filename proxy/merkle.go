@@ -68,11 +68,11 @@ var batchedResponses = &BatchedRequests{
 
 const (
 	safetyFactor          = 2
-	batchSize             = 256
+	batchSize             = 8192
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
-	timeWindow            = 20 * time.Millisecond
+	timeWindow            = 10 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 512
 	saltBits              = 256

@@ -35,8 +35,9 @@ type DNSResponse struct {
 }
 
 type WaitingResponse struct {
-	response *DNSResponse
-	notifyCh chan int
+	response  *DNSResponse
+	notifyCh  chan int
+	processed bool
 }
 
 type BatchedResponses struct {
@@ -59,7 +60,8 @@ var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
 
 var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor) // trying to change to an unbuffered channel
-var processingBatch sync.Mutex
+var collectingMutex sync.Mutex
+var processingMutex sync.Mutex
 var batchTimer *time.Timer
 var collectingResponses = &BatchedResponses{
 	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
@@ -107,16 +109,16 @@ func init() {
 }
 
 func handleBatch() {
-	processingBatch.Lock()
-
+	collectingMutex.Lock()
+	processingMutex.Lock()
 	swapBuffers()
 
 	if batchTimer != nil {
 		batchTimer.Stop()
 		batchTimer = nil
 	}
-
-	processingBatch.Unlock()
+	processingMutex.Unlock()
+	collectingMutex.Unlock()
 
 	go processBatch()
 }
@@ -134,8 +136,9 @@ func StartBatchingProcess() {
 		for {
 			waitingRes := <-batchedResponsesCh
 
-			processingBatch.Lock()
+			collectingMutex.Lock()
 			collectingResponses.responses = append(collectingResponses.responses, waitingRes)
+			collectingMutex.Unlock()
 			shouldProcess := false
 
 			// Check for batch size exceeding
@@ -146,7 +149,6 @@ func StartBatchingProcess() {
 				// We'll start the timer after unlocking.
 				shouldProcess = false
 			}
-			processingBatch.Unlock()
 
 			if shouldProcess {
 				handleBatch()
@@ -183,8 +185,9 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		return
 	}
 	waitingRes := WaitingResponse{
-		response: dnsResponse,
-		notifyCh: make(chan int),
+		response:  dnsResponse,
+		notifyCh:  make(chan int),
+		processed: false,
 	}
 	batchedResponsesCh <- waitingRes
 
@@ -214,6 +217,8 @@ func swapBuffers() {
 }
 
 func processBatch() {
+	processingMutex.Lock()
+	defer processingMutex.Unlock()
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {
 		contents = append(contents, waitingRes.response)
@@ -237,6 +242,10 @@ func processBatch() {
 
 	// Notify all waiting responses of the batch size
 	for _, waitingRes := range processingResponses.responses {
+		if waitingRes.processed {
+			continue
+		}
+		waitingRes.processed = true
 		path, indexes, err := tree.GetMerklePath(waitingRes.response)
 		if err != nil {
 			log.Error("error getting merkle path: %s", err)
@@ -274,6 +283,7 @@ func processBatch() {
 		waitingRes.notifyCh <- NotificationProcessed
 		close(waitingRes.notifyCh)
 	}
+	processingResponses.responses = processingResponses.responses[:0]
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {

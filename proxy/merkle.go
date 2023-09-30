@@ -39,7 +39,7 @@ type WaitingResponse struct {
 	notifyCh chan int
 }
 
-type BatchedRequests struct {
+type BatchedResponses struct {
 	responses []WaitingResponse
 }
 
@@ -61,7 +61,10 @@ var publicKeyMerkle *ecdsa.PublicKey
 var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor) // trying to change to an unbuffered channel
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
-var batchedResponses = &BatchedRequests{
+var collectingResponses = &BatchedResponses{
+	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
+}
+var processingResponses = &BatchedResponses{
 	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
 }
 
@@ -117,16 +120,16 @@ func StartBatchingProcess() {
 			waitingRes := <-batchedResponsesCh
 
 			processingBatch.Lock()
-			batchedResponses.responses = append(batchedResponses.responses, waitingRes)
+			collectingResponses.responses = append(collectingResponses.responses, waitingRes)
 			shouldProcess := false
 
 			// Check if it's larger than the batch size, if so give an error
-			if len(batchedResponses.responses) > batchSize {
-				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, %d", batchSize, len(batchedResponses.responses))
+			if len(collectingResponses.responses) > batchSize {
+				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, %d", batchSize, len(collectingResponses.responses))
 			}
 
 			// Check if we've accumulated enough requests for a batch, and if so, process them and reset timer
-			if len(batchedResponses.responses) >= batchSize {
+			if len(collectingResponses.responses) >= batchSize {
 				if batchTimer != nil {
 					batchTimer.Stop()
 					batchTimer = nil
@@ -189,8 +192,8 @@ func processBatch() {
 	processingBatch.Lock()
 
 	// Separate out the current batch and reset for the next batch
-	currentBatch := batchedResponses.responses
-	batchedResponses.responses = make([]WaitingResponse, 0, batchSize*safetyFactor)
+	collectingResponses, processingResponses = processingResponses, collectingResponses
+	collectingResponses.responses = collectingResponses.responses[:0]
 
 	// Stop the batch timer if it's running
 	if batchTimer != nil {
@@ -200,7 +203,7 @@ func processBatch() {
 
 	processingBatch.Unlock()
 	// if the batch is empty, return
-	if len(currentBatch) == 0 {
+	if len(processingResponses.responses) == 0 {
 		processingBatch.Lock()
 		if batchTimer == nil {
 			batchTimer = time.AfterFunc(timeWindow, processBatch)
@@ -211,7 +214,7 @@ func processBatch() {
 	// Time to process the batch! The first thing to do is construct the Merkle tree.
 	// For simplicity, we will use the DNSContext as the Content for the Merkle tree.
 	var contents []merkletree.Content
-	for _, waitingRes := range currentBatch {
+	for _, waitingRes := range processingResponses.responses {
 		contents = append(contents, waitingRes.response)
 		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingRes.response.DNSContext.Req.Question[0].Name)
 	}
@@ -233,7 +236,7 @@ func processBatch() {
 	}
 
 	// Notify all waiting responses of the batch size
-	for _, waitingRes := range currentBatch {
+	for _, waitingRes := range processingResponses.responses {
 		path, indexes, err := tree.GetMerklePath(waitingRes.response)
 		if err != nil {
 			log.Error("error getting merkle path: %s", err)
@@ -271,7 +274,7 @@ func processBatch() {
 		// TODO: handle oversized responses, truncate, separate TCP & UDP, all for next time
 		// check that the DNS total length is less than 512 bytes if the protocol is UDP
 		if waitingRes.response.DNSContext.Res.Len() > maxDnsUdpSize && maxUdpSizeCheck {
-			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingRes.response.DNSContext.Res.Len(), len(currentBatch))
+			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingRes.response.DNSContext.Res.Len(), len(processingResponses.responses))
 			log.Debug("DNS response: %s", waitingRes.response.DNSContext.Res.String())
 			// number of extra records is the number of proofs + 2 (for salt and signature)
 			log.Debug("Number of extra records: %d", len(waitingRes.response.DNSContext.Res.Extra))

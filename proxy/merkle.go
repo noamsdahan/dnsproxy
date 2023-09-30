@@ -117,7 +117,9 @@ func init() {
 }
 
 func handleBatch() {
+	log.Info("[BATCH_PROCESS] Handling batch... locking collecting mutex")
 	collectingMutex.Lock()
+	log.Info("[BATCH_PROCESS] Handling batch... locking processing mutex")
 	processingMutex.Lock()
 	swapBuffers()
 
@@ -125,7 +127,10 @@ func handleBatch() {
 		batchTimer.Stop()
 		batchTimer = nil
 	}
+
+	log.Info("[BATCH_PROCESS] handleBatch: unlocking processing mutex")
 	processingMutex.Unlock()
+	log.Info("[BATCH_PROCESS] handleBatch: unlocking collecting mutex")
 	collectingMutex.Unlock()
 
 	go processBatch()
@@ -292,7 +297,7 @@ func processBatch() {
 		close(waitingRes.notifyCh)
 	}
 	processingResponses.responses = processingResponses.responses[:0]
-	log.Info("[BATCH_PROCESS] Batch %d processed", batchId)
+	log.Info("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {

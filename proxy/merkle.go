@@ -627,13 +627,15 @@ func serializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
 	}
 	serializedData = append(serializedData, indexBuffer.Bytes())
 
-	// 2. Serialize the entire path
-	hashBuffer := new(bytes.Buffer)
-	hashEncoder := gob.NewEncoder(hashBuffer)
-	if err := hashEncoder.Encode(path); err != nil {
-		return nil, err
+	// 2. Serialize each individual hash in the path
+	for _, hash := range path {
+		hashBuffer := new(bytes.Buffer)
+		hashEncoder := gob.NewEncoder(hashBuffer)
+		if err := hashEncoder.Encode(hash); err != nil {
+			return nil, err
+		}
+		serializedData = append(serializedData, hashBuffer.Bytes())
 	}
-	serializedData = append(serializedData, hashBuffer.Bytes())
 
 	return serializedData, nil
 }

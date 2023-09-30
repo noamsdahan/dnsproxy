@@ -59,7 +59,7 @@ type MerkleProofB64 struct {
 var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
 
-var batchedRequestsCh = make(chan WaitingResponse, batchSize*safetyFactor) // trying to change to an unbuffered channel
+var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor) // trying to change to an unbuffered channel
 var processingBatch sync.Mutex
 var batchTimer *time.Timer
 var batchedResponses = &BatchedRequests{
@@ -75,7 +75,7 @@ const (
 	timeWindow            = 10 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 512
-	saltBits              = 256
+	saltBits              = 128
 	maxUdpSizeCheck       = false
 )
 
@@ -104,10 +104,10 @@ func init() {
 	}
 }
 
-// StartBatchingProcess starts the batching process. It listens on the batchedRequestsCh channel for incoming responses.
+// StartBatchingProcess starts the batching process. It listens on the batchedResponsesCh channel for incoming responses.
 // When a request is received, it is added to the batch. When the timer expires, the batch is processed.
 // This function does four things:
-// 1. Starts a goroutine that listens on the batchedRequestsCh channel for incoming responses.
+// 1. Starts a goroutine that listens on the batchedResponsesCh channel for incoming responses.
 // 2. Starts a timer that triggers the processing of the batch.
 // 3. When a request is received, it is added to the batch.
 // 4. When the timer expires, it processes the batch.
@@ -115,7 +115,7 @@ func StartBatchingProcess() {
 	go func() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
-			waitingRes := <-batchedRequestsCh
+			waitingRes := <-batchedResponsesCh
 
 			processingBatch.Lock()
 			batchedResponses.responses = append(batchedResponses.responses, waitingRes)
@@ -177,7 +177,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		response: dnsResponse,
 		notifyCh: make(chan int),
 	}
-	batchedRequestsCh <- waitingRes
+	batchedResponsesCh <- waitingRes
 
 	errCode := <-waitingRes.notifyCh // Block until we have the batch size
 	if errCode != NotificationProcessed {
@@ -213,9 +213,9 @@ func processBatch() {
 	// Time to process the batch! The first thing to do is construct the Merkle tree.
 	// For simplicity, we will use the DNSContext as the Content for the Merkle tree.
 	var contents []merkletree.Content
-	for _, waitingReq := range currentBatch {
-		contents = append(contents, waitingReq.response)
-		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingReq.response.DNSContext.Req.Question[0].Name)
+	for _, waitingRes := range currentBatch {
+		contents = append(contents, waitingRes.response)
+		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingRes.response.DNSContext.Req.Question[0].Name)
 	}
 	proof := &MerkleProof{}
 	// TODO: sort responses by source IP address
@@ -236,68 +236,41 @@ func processBatch() {
 	}
 
 	// Notify all waiting responses of the batch size
-	for _, waitingReq := range currentBatch {
-		path, indexes, err := tree.GetMerklePath(waitingReq.response)
+	for _, waitingRes := range currentBatch {
+		path, indexes, err := tree.GetMerklePath(waitingRes.response)
 		if err != nil {
 			log.Error("error getting merkle path: %s", err)
 			continue
 		}
 		// Serialize and append the Merkle path and indexes
-		proof.Proof, err = serializePathAndIndexes(path, indexes)
+		proof.Proof, err = SerializePathAndIndexes(path, indexes)
 		if err != nil {
 			log.Error("error serializing merkle path and indexes: %s", err)
 			continue
 		}
-		// Encode the Merkle proof to base64
-		// List to store all encoded data: salt, signature, and proofs
-		var allEncodedData []string
 
-		// Encode salt and signature
-		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(waitingReq.response.Salt))
-		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proof.Signature))
+		allEncodedData := encodeProofB64(&waitingRes, proof)
+		packedData := PackStringsForTxtRecord(allEncodedData)
 
-		// Add the encoded proofs
-		for _, proofRecord := range proof.Proof {
-			// Base64 encoding to ensure the data fits within DNS TXT character restrictions
-			allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proofRecord))
-		}
-
-		// Efficiently partition the encoded data among the TXT records
-		packedData := packStringsForTxtRecord(allEncodedData)
-
-		extraLen := len(waitingReq.response.DNSContext.Res.Extra)
-		totalTxtRecords := len(packedData)
-		if cap(waitingReq.response.DNSContext.Res.Extra) < extraLen+totalTxtRecords {
-			newExtra := make([]dns.RR, extraLen, extraLen+totalTxtRecords)
-			copy(newExtra, waitingReq.response.DNSContext.Res.Extra)
-			waitingReq.response.DNSContext.Res.Extra = newExtra
-		}
-
-		for _, packed := range packedData {
-			rr := &dns.TXT{
-				Hdr: dns.RR_Header{Name: waitingReq.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
-				Txt: []string{packed},
-			}
-			waitingReq.response.DNSContext.Res.Extra = append(waitingReq.response.DNSContext.Res.Extra, rr)
-		}
+		AppendPackedDataAsTxtRecords(waitingRes, packedData)
 
 		// log the response size
-		log.Debug("[BATCH_PROCESS] Response size: %d\n", waitingReq.response.DNSContext.Res.Len())
+		log.Debug("[BATCH_PROCESS] Response size: %d\n", waitingRes.response.DNSContext.Res.Len())
 		// log the length of the last TXT record
-		log.Debug("[BATCH_PROCESS] Last TXT record length: %d\n", len(waitingReq.response.DNSContext.Res.Extra[len(waitingReq.response.DNSContext.Res.Extra)-1].String()))
+		log.Debug("[BATCH_PROCESS] Last TXT record length: %d\n", len(waitingRes.response.DNSContext.Res.Extra[len(waitingRes.response.DNSContext.Res.Extra)-1].String()))
 		// TODO: handle oversized responses, truncate, separate TCP & UDP, all for next time
 		// check that the DNS total length is less than 512 bytes if the protocol is UDP
-		if waitingReq.response.DNSContext.Res.Len() > maxDnsUdpSize && maxUdpSizeCheck {
-			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingReq.response.DNSContext.Res.Len(), len(currentBatch))
-			log.Debug("DNS response: %s", waitingReq.response.DNSContext.Res.String())
+		if waitingRes.response.DNSContext.Res.Len() > maxDnsUdpSize && maxUdpSizeCheck {
+			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingRes.response.DNSContext.Res.Len(), len(currentBatch))
+			log.Debug("DNS response: %s", waitingRes.response.DNSContext.Res.String())
 			// number of extra records is the number of proofs + 2 (for salt and signature)
-			log.Debug("Number of extra records: %d", len(waitingReq.response.DNSContext.Res.Extra))
+			log.Debug("Number of extra records: %d", len(waitingRes.response.DNSContext.Res.Extra))
 			// continue // TODO: handle this the DNS way by sending a truncated response
 			// Send a truncated response
-			waitingReq.response.DNSContext.Res.Truncated = true // TODO is this ok?
+			waitingRes.response.DNSContext.Res.Truncated = true // TODO is this ok?
 		}
-		waitingReq.notifyCh <- NotificationProcessed
-		close(waitingReq.notifyCh)
+		waitingRes.notifyCh <- NotificationProcessed
+		close(waitingRes.notifyCh)
 	}
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
@@ -308,6 +281,39 @@ func processBatch() {
 	}
 	processingBatch.Unlock()
 
+}
+
+func AppendPackedDataAsTxtRecords(waitingRes WaitingResponse, packedData []string) {
+	extraLen := len(waitingRes.response.DNSContext.Res.Extra)
+	totalTxtRecords := len(packedData)
+	if cap(waitingRes.response.DNSContext.Res.Extra) < extraLen+totalTxtRecords {
+		newExtra := make([]dns.RR, extraLen, extraLen+totalTxtRecords)
+		copy(newExtra, waitingRes.response.DNSContext.Res.Extra)
+		waitingRes.response.DNSContext.Res.Extra = newExtra
+	}
+
+	for _, packed := range packedData {
+		rr := &dns.TXT{
+			Hdr: dns.RR_Header{Name: waitingRes.response.DNSContext.Req.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: txtRecordTTL},
+			Txt: []string{packed},
+		}
+		waitingRes.response.DNSContext.Res.Extra = append(waitingRes.response.DNSContext.Res.Extra, rr)
+	}
+}
+
+func encodeProofB64(waitingRes *WaitingResponse, proof *MerkleProof) []string {
+	var allEncodedData []string
+
+	// Encode salt and signature
+	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(waitingRes.response.Salt))
+	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proof.Signature))
+
+	// Add the encoded proofs
+	for _, proofRecord := range proof.Proof {
+		// Base64 encoding to ensure the data fits within DNS TXT character restrictions
+		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proofRecord))
+	}
+	return allEncodedData
 }
 
 // MerkleRrResponseHandler verifies the DNS response containing Merkle proof and signatures.
@@ -323,14 +329,14 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	// log the response
 	log.Debug("[MerkleRR]: Response: %s", d.Res.String())
 	// Extract the Merkle root, signature, and serialized proof from TXT records
-	salt, signature, merkleProofSerialized, err := extractTXTData(d.Res.Extra)
+	salt, signature, merkleProofSerialized, err := ExtractTXTData(d.Res.Extra)
 	if err != nil {
 		log.Error("Error extracting Merkle root, signature, and proof from DNS response: %s. %s", err, d.Res.Extra)
 		return
 	}
 
 	// Deserialize the Merkle path and indexes
-	path, indexes, err := deserializeMerkleData(merkleProofSerialized)
+	path, indexes, err := DeserializeMerkleData(merkleProofSerialized)
 	if err != nil {
 		log.Error("Error deserializing Merkle path and indexes: %s", err)
 		return
@@ -370,7 +376,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	log.Debug("Verified DNS response successfully")
 }
 
-func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
+func ExtractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 	// Get all TXT record data
 	var packedData []string
 	for _, rr := range extra {
@@ -380,7 +386,7 @@ func extractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 	}
 
 	// Unpack the data
-	unpackedData := splitConcatenatedBase64(packedData)
+	unpackedData := SplitConcatenatedBase64(packedData)
 
 	if len(unpackedData) < 2 {
 		return nil, nil, nil, fmt.Errorf("salt, signature, or proof not found in DNS response")
@@ -434,7 +440,7 @@ func verifySignature(hash []byte, signature []byte) bool {
 	var rs ECDSASignature
 	// Unmarshal the ASN.1 DER encoded signature
 	if _, err := asn1.Unmarshal(signature, &rs); err != nil {
-		log.Error("Failed to unmarshal signature:", err)
+		log.Error("Failed to unmarshal signature: %s", err)
 		return false
 	}
 
@@ -618,7 +624,7 @@ func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 	return bytes.Equal(dres.Hash, otherContent.Hash), nil
 }
 
-func serializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
+func SerializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
 	var serializedData [][]byte
 
 	// 1. Serialize indexes
@@ -642,7 +648,7 @@ func serializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
 	return serializedData, nil
 }
 
-func deserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
+func DeserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 	var path [][]byte
 	var indexes []int64
 
@@ -665,7 +671,7 @@ func deserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 	return path, indexes, nil
 }
 
-func packStringsForTxtRecord(strs []string) []string {
+func PackStringsForTxtRecord(strs []string) []string {
 	result := make([]string, 0)
 	buffer := ""
 	carryOver := ""
@@ -699,7 +705,7 @@ func packStringsForTxtRecord(strs []string) []string {
 	return result
 }
 
-func splitConcatenatedBase64(packedStrings []string) []string {
+func SplitConcatenatedBase64(packedStrings []string) []string {
 	allStrings := make([]string, 0)
 	carryOver := ""
 

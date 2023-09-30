@@ -106,6 +106,21 @@ func init() {
 	}
 }
 
+func handleBatch() {
+	processingBatch.Lock()
+
+	swapBuffers()
+
+	if batchTimer != nil {
+		batchTimer.Stop()
+		batchTimer = nil
+	}
+
+	processingBatch.Unlock()
+
+	go processBatch()
+}
+
 // StartBatchingProcess starts the batching process. It listens on the batchedResponsesCh channel for incoming responses.
 // When a request is received, it is added to the batch. When the timer expires, the batch is processed.
 // This function does four things:
@@ -123,28 +138,20 @@ func StartBatchingProcess() {
 			collectingResponses.responses = append(collectingResponses.responses, waitingRes)
 			shouldProcess := false
 
-			// Check if it's larger than the batch size, if so give an error
+			// Check for batch size exceeding
 			if len(collectingResponses.responses) > batchSize {
-				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, %d", batchSize, len(collectingResponses.responses))
-			}
-
-			// Check if we've accumulated enough requests for a batch, and if so, process them and reset timer
-			if len(collectingResponses.responses) >= batchSize {
-				if batchTimer != nil {
-					batchTimer.Stop()
-					batchTimer = nil
-				}
+				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, current size is %d", batchSize, len(collectingResponses.responses))
 				shouldProcess = true
 			} else if batchTimer == nil {
-				// Mark that we need to start the timer outside the lock
+				// We'll start the timer after unlocking.
 				shouldProcess = false
 			}
 			processingBatch.Unlock()
 
 			if shouldProcess {
-				go processBatch()
+				handleBatch()
 			} else if batchTimer == nil {
-				batchTimer = time.AfterFunc(timeWindow, processBatch)
+				batchTimer = time.AfterFunc(timeWindow, handleBatch)
 			}
 		}
 	}()
@@ -188,10 +195,10 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	}
 }
 
-func processBatch() {
-	processingBatch.Lock()
+func swapBuffers() {
+	// No locks in here
 
-	// Separate out the current batch and reset for the next batch
+	// Swap the buffers
 	collectingResponses, processingResponses = processingResponses, collectingResponses
 	collectingResponses.responses = collectingResponses.responses[:0]
 
@@ -201,25 +208,18 @@ func processBatch() {
 		batchTimer = nil
 	}
 
-	processingBatch.Unlock()
-	// if the batch is empty, return
-	if len(processingResponses.responses) == 0 {
-		processingBatch.Lock()
-		if batchTimer == nil {
-			batchTimer = time.AfterFunc(timeWindow, processBatch)
-		}
-		processingBatch.Unlock()
-		return
+	if len(processingResponses.responses) == 0 && batchTimer == nil {
+		batchTimer = time.AfterFunc(timeWindow, swapBuffers)
 	}
-	// Time to process the batch! The first thing to do is construct the Merkle tree.
-	// For simplicity, we will use the DNSContext as the Content for the Merkle tree.
+}
+
+func processBatch() {
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {
 		contents = append(contents, waitingRes.response)
 		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingRes.response.DNSContext.Req.Question[0].Name)
 	}
 	proof := &MerkleProof{}
-	// TODO: sort responses by source IP address
 	// log length of contents
 	log.Debug("[BATCH_PROCESS] Total responses in batch: %d\n", len(contents))
 	tree, err := merkletree.NewTree(contents)
@@ -263,36 +263,17 @@ func processBatch() {
 			copy(newExtra, waitingRes.response.DNSContext.Res.Extra)
 			waitingRes.response.DNSContext.Res.Extra = newExtra
 		}
-
-		// Append the new TXT records
 		waitingRes.response.DNSContext.Res.Extra = append(waitingRes.response.DNSContext.Res.Extra, newTxtRecords...)
 
-		// log the response size
-		log.Debug("[BATCH_PROCESS] Response size: %d\n", waitingRes.response.DNSContext.Res.Len())
-		// log the length of the last TXT record
-		log.Debug("[BATCH_PROCESS] Last TXT record length: %d\n", len(waitingRes.response.DNSContext.Res.Extra[len(waitingRes.response.DNSContext.Res.Extra)-1].String()))
 		// TODO: handle oversized responses, truncate, separate TCP & UDP, all for next time
 		// check that the DNS total length is less than 512 bytes if the protocol is UDP
 		if waitingRes.response.DNSContext.Res.Len() > maxDnsUdpSize && maxUdpSizeCheck {
 			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingRes.response.DNSContext.Res.Len(), len(processingResponses.responses))
-			log.Debug("DNS response: %s", waitingRes.response.DNSContext.Res.String())
-			// number of extra records is the number of proofs + 2 (for salt and signature)
-			log.Debug("Number of extra records: %d", len(waitingRes.response.DNSContext.Res.Extra))
-			// continue // TODO: handle this the DNS way by sending a truncated response
-			// Send a truncated response
-			waitingRes.response.DNSContext.Res.Truncated = true // TODO is this ok?
+			waitingRes.response.DNSContext.Res.Truncated = true
 		}
 		waitingRes.notifyCh <- NotificationProcessed
 		close(waitingRes.notifyCh)
 	}
-
-	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	processingBatch.Lock()
-	if batchTimer == nil {
-		batchTimer = time.AfterFunc(timeWindow, processBatch)
-	}
-	processingBatch.Unlock()
-
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {

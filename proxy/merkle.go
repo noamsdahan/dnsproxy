@@ -59,7 +59,7 @@ type MerkleProofB64 struct {
 var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
 
-var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor) // trying to change to an unbuffered channel
+var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor)
 var collectingMutex sync.Mutex
 var processingMutex sync.Mutex
 var batchTimer *time.Timer
@@ -138,9 +138,9 @@ func handleBatch() {
 // 4. When the timer expires, it processes the batch.
 func StartBatchingProcess() {
 	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 
 	go func() {
+		log.Info("Ticker goroutine started.")
 		for range ticker.C {
 			log.Info("Channel length: %d, capacity: %d", len(batchedResponsesCh), cap(batchedResponsesCh))
 		}

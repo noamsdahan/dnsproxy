@@ -149,9 +149,11 @@ func StartBatchingProcess() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
 			waitingRes := <-batchedResponsesCh
-
+			log.Info("[BATCH_PROCESS] Received response, locking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
 			collectingMutex.Lock()
+			log.Info("collecting mutex locked")
 			collectingResponses.responses = append(collectingResponses.responses, waitingRes)
+			log.Info("[BATCH_PROCESS] unlocking collecting mutex", waitingRes.response.DNSContext.Req.Question[0].Name)
 			collectingMutex.Unlock()
 			shouldProcess := false
 
@@ -223,9 +225,9 @@ func swapBuffers() {
 
 func processBatch() {
 	batchId := time.Now().UnixNano()
-	log.Info("[BATCH_PROCESS] Processing batch %d... attempting to lock mutex", batchId)
+	log.Info("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
 	processingMutex.Lock()
-	log.Info("[BATCH_PROCESS] Processing batch %d... mutex locked", batchId)
+	log.Info("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
 	defer processingMutex.Unlock()
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {

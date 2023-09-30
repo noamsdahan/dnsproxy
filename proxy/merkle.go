@@ -75,6 +75,7 @@ const (
 	timeWindow            = 20 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 512
+	saltBits              = 256
 )
 
 func init() {
@@ -157,8 +158,8 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 		return
 	}
 
-	// generate a salt of 128 bits
-	salt := make([]byte, 1)
+	// generate a salt
+	salt := make([]byte, saltBits)
 	_, err = rand.Read(salt)
 
 	// Create a new DNSResponse struct

@@ -304,14 +304,13 @@ func AppendPackedDataAsTxtRecords(waitingRes WaitingResponse, packedData []strin
 func encodeProofB64(waitingRes *WaitingResponse, proof *MerkleProof) []string {
 	var allEncodedData []string
 
-	// Encode salt and signature
-	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(waitingRes.response.Salt))
-	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proof.Signature))
+	// Encode salt and signature with colons
+	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(waitingRes.response.Salt)+":")
+	allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proof.Signature)+":")
 
-	// Add the encoded proofs
+	// Add the encoded proofs with colons
 	for _, proofRecord := range proof.Proof {
-		// Base64 encoding to ensure the data fits within DNS TXT character restrictions
-		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proofRecord))
+		allEncodedData = append(allEncodedData, base64.StdEncoding.EncodeToString(proofRecord)+":")
 	}
 	return allEncodedData
 }
@@ -673,28 +672,24 @@ func DeserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 func PackStringsForTxtRecord(strs []string) []string {
 	result := make([]string, 0)
 	buffer := ""
-	carryOver := ""
 
 	for _, str := range strs {
-		str = carryOver + str
+		remainingLength := maxEncodedLength - len(buffer)
+		if len(str) <= remainingLength {
+			buffer += str
+		} else {
+			// Append the part of the string that fits
+			buffer += str[:remainingLength]
+			result = append(result, buffer)
 
-		for len(str) > 0 {
-			spaceLeft := maxEncodedLength - len(buffer)
-			if len(str) <= spaceLeft {
-				buffer += str + ":"
-				str = ""
-			} else {
-				buffer += str[:spaceLeft]
-				str = str[spaceLeft:]
-			}
-
-			if len(buffer) == maxEncodedLength {
-				result = append(result, buffer)
-				buffer = ""
-			}
+			// Reset buffer and process the remainder of the string
+			buffer = str[remainingLength:]
 		}
 
-		carryOver = str
+		if len(buffer) == maxEncodedLength {
+			result = append(result, buffer)
+			buffer = ""
+		}
 	}
 
 	if buffer != "" {
@@ -703,6 +698,7 @@ func PackStringsForTxtRecord(strs []string) []string {
 
 	return result
 }
+
 func SplitConcatenatedBase64(packedDataString string) []string {
 	// Splitting the concatenated data by colon
 	allParts := strings.Split(packedDataString, ":")

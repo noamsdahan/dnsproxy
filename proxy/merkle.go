@@ -209,10 +209,6 @@ func swapBuffers() {
 		batchTimer.Stop()
 		batchTimer = nil
 	}
-
-	if len(processingResponses.responses) == 0 && batchTimer == nil {
-		batchTimer = time.AfterFunc(timeWindow, swapBuffers)
-	}
 }
 
 func processBatch() {

@@ -566,11 +566,14 @@ func calculateMerkleRoot(dres *DNSResponse, merklePath [][]byte, indexes []int64
 	log.Debug("Merkle path indexes: %d", indexes)
 	// log known root hash
 	log.Debug("Known root hash signature: %x", knownRootHashSignature)
-	leafHash, err := dres.CalculateHash()
-	if err != nil {
-		log.Error("Error calculating leaf hash: %v", err)
-		return nil, err
+	var err error
+	if dres.Hash == nil {
+		if dres.Hash, err = dres.CalculateHash(); err != nil {
+			log.Error("Error calculating hash for DNSResponse: %v", err)
+			return nil, err
+		}
 	}
+	leafHash := dres.Hash
 
 	log.Debug("Calculated leaf hash: %x", leafHash)
 
@@ -608,25 +611,24 @@ func (dres *DNSResponse) CalculateHash() ([]byte, error) {
 	}
 
 	h := sha256.New()
-	if _, err := h.Write(dres.Salt); err != nil {
-		return nil, err
-	}
-	for _, question := range dres.DNSContext.Req.Question {
-		if _, err := h.Write([]byte(question.String())); err != nil {
-			return nil, err
-		}
+	h.Write(dres.Salt) // Ignore error since h.Write() never fails
 
+	for _, question := range dres.DNSContext.Req.Question {
+		h.Write([]byte(question.String())) // Ignore error
 	}
+
 	for _, answer := range dres.DNSContext.Res.Answer {
-		if _, err := h.Write([]byte(answer.String())); err != nil {
-			return nil, err
-		}
+		h.Write([]byte(answer.String())) // Ignore error
 	}
+
+	hashedValue := h.Sum(nil)
 	// log the hash
-	log.Debug("Calculated hash for %s: %x", dres.DNSContext.Req.Question[0].Name, h.Sum(nil))
+	log.Debug("Calculated hash for %s: %x", dres.DNSContext.Req.Question[0].Name, hashedValue)
 	// log salt
 	log.Debug("Salt for %s: %x", dres.DNSContext.Req.Question[0].Name, dres.Salt)
-	return h.Sum(nil), nil
+
+	dres.Hash = hashedValue
+	return hashedValue, nil
 }
 
 func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
@@ -635,12 +637,21 @@ func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 		return false, errors.New("value is not of type DNSResponse")
 	}
 
+	var err error
 	if dres.Hash == nil {
-		dres.Hash, _ = dres.CalculateHash()
+		dres.Hash, err = dres.CalculateHash()
+		if err != nil {
+			log.Error("Error calculating hash for DNSResponse: %v", err)
+			return false, err
+		}
 	}
 
 	if otherContent.Hash == nil {
-		otherContent.Hash, _ = otherContent.CalculateHash()
+		otherContent.Hash, err = otherContent.CalculateHash()
+		if err != nil {
+			log.Error("Error calculating hash for other DNSResponse: %v", err)
+			return false, err
+		}
 	}
 
 	return bytes.Equal(dres.Hash, otherContent.Hash), nil

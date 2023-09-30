@@ -619,7 +619,7 @@ func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 func serializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
 	var serializedData [][]byte
 
-	// 1. Serialize indexes and add them to the result slice
+	// 1. Serialize indexes
 	indexBuffer := new(bytes.Buffer)
 	indexEncoder := gob.NewEncoder(indexBuffer)
 	if err := indexEncoder.Encode(indexes); err != nil {
@@ -627,19 +627,13 @@ func serializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
 	}
 	serializedData = append(serializedData, indexBuffer.Bytes())
 
-	// 2. Serialize hashes in chunks and add each chunk to the result slice
-	for i := 0; i < len(path); i += hashesPerTxtRecord {
-		end := i + hashesPerTxtRecord
-		if end > len(path) {
-			end = len(path)
-		}
-		hashBuffer := new(bytes.Buffer)
-		hashEncoder := gob.NewEncoder(hashBuffer)
-		if err := hashEncoder.Encode(path[i:end]); err != nil {
-			return nil, err
-		}
-		serializedData = append(serializedData, hashBuffer.Bytes())
+	// 2. Serialize the entire path
+	hashBuffer := new(bytes.Buffer)
+	hashEncoder := gob.NewEncoder(hashBuffer)
+	if err := hashEncoder.Encode(path); err != nil {
+		return nil, err
 	}
+	serializedData = append(serializedData, hashBuffer.Bytes())
 
 	return serializedData, nil
 }

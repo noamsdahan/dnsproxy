@@ -650,12 +650,12 @@ func deserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 
 	// Subsequent records are for the hashes
 	for _, record := range records[1:] {
-		var chunk [][]byte
+		var hash []byte
 		hashDecoder := gob.NewDecoder(bytes.NewBuffer(record))
-		if err := hashDecoder.Decode(&chunk); err != nil {
+		if err := hashDecoder.Decode(&hash); err != nil {
 			return nil, nil, fmt.Errorf("error deserializing Merkle path: %s", err)
 		}
-		path = append(path, chunk...)
+		path = append(path, hash)
 	}
 
 	return path, indexes, nil

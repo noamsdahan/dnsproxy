@@ -75,7 +75,6 @@ const (
 	batchSize             = 65535
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
-	hashesPerTxtRecord    = 4
 	timeWindow            = 5 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 512
@@ -239,7 +238,8 @@ func processBatch() {
 		log.Error("error signing merkle root: %s", err)
 		return
 	}
-
+	// log batch size
+	log.Info("[BATCH_PROCESS] Batch size: %d\n", len(processingResponses.responses))
 	// Notify all waiting responses of the batch size
 	for _, waitingRes := range processingResponses.responses {
 		if waitingRes.processed {

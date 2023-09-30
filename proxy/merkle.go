@@ -74,6 +74,7 @@ const (
 	hashesPerTxtRecord    = 4
 	timeWindow            = 20 * time.Millisecond
 	maxEncodedLength      = 255
+	maxDnsUdpSize         = 512
 )
 
 func init() {
@@ -284,8 +285,8 @@ func processBatch() {
 		log.Debug("[BATCH_PROCESS] Last TXT record length: %d\n", len(waitingReq.response.DNSContext.Res.Extra[len(waitingReq.response.DNSContext.Res.Extra)-1].String()))
 		// TODO: handle oversized responses, truncate, separate TCP & UDP, all for next time
 		// check that the DNS total length is less than 512 bytes if the protocol is UDP
-		if waitingReq.response.DNSContext.Res.Len() > 512 {
-			log.Error("DNS response exceeds 512 bytes, size is %d, there are %d requests in the batch", waitingReq.response.DNSContext.Res.Len(), len(currentBatch))
+		if waitingReq.response.DNSContext.Res.Len() > maxDnsUdpSize {
+			log.Error("DNS response exceeds %d bytes, size is %d, there are %d requests in the batch", maxDnsUdpSize, waitingReq.response.DNSContext.Res.Len(), len(currentBatch))
 			log.Debug("DNS response: %s", waitingReq.response.DNSContext.Res.String())
 			// number of extra records is the number of proofs + 2 (for salt and signature)
 			log.Debug("Number of extra records: %d", len(waitingReq.response.DNSContext.Res.Extra))

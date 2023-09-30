@@ -67,11 +67,11 @@ var batchedResponses = &BatchedRequests{
 
 const (
 	safetyFactor          = 2
-	batchSize             = 8192
+	batchSize             = 65535
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
 	hashesPerTxtRecord    = 4
-	timeWindow            = 10 * time.Millisecond
+	timeWindow            = 5 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 512
 	saltBits              = 128
@@ -284,7 +284,6 @@ func processBatch() {
 	}
 
 	log.Debug("[BATCH_PROCESS] Finished processing batch. Clearing batch.")
-	// batchedResponses.responses = batchedResponses.responses[:0]
 	processingBatch.Lock()
 	if batchTimer == nil {
 		batchTimer = time.AfterFunc(timeWindow, processBatch)

@@ -11,7 +11,6 @@ import (
 	"encoding/gob"
 	"encoding/pem"
 	"fmt"
-	"github.com/AdguardTeam/golibs/errors"
 	"github.com/AdguardTeam/golibs/log"
 	"github.com/cbergoon/merkletree"
 	"github.com/miekg/dns"
@@ -71,13 +70,19 @@ var processingResponses = &BatchedResponses{
 	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
 }
 var longestTime = 0 * time.Millisecond
+var signatureCache = sync.Map{}
+
+type cacheKey struct {
+	Hash      [32]byte
+	Signature string
+}
 
 const (
 	safetyFactor          = 2
-	batchSize             = 65535
+	batchSize             = 1024
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
-	timeWindow            = 120 * time.Millisecond
+	timeWindow            = 100 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 4096
 	saltBits              = 128
@@ -118,7 +123,7 @@ func handleBatch() {
 	swapBuffers()
 
 	if batchTimer != nil {
-		log.Info("[BATCH_PROCESS] handleBatch: stopping timer")
+		log.Debug("[BATCH_PROCESS] handleBatch: stopping timer")
 		batchTimer.Stop()
 		batchTimer = nil
 	}
@@ -139,15 +144,6 @@ func handleBatch() {
 // 3. When a request is received, it is added to the batch.
 // 4. When the timer expires, it processes the batch.
 func StartBatchingProcess() {
-	ticker := time.NewTicker(time.Second)
-
-	go func() {
-		log.Debug("Ticker goroutine started.")
-		for range ticker.C {
-			log.Info("Channel length: %d, capacity: %d", len(batchedResponsesCh), cap(batchedResponsesCh))
-		}
-	}()
-
 	go func() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
@@ -161,8 +157,7 @@ func StartBatchingProcess() {
 			shouldProcess := false
 
 			// Check for batch size exceeding
-			if len(collectingResponses.responses) > batchSize {
-				log.Error("[BATCH_PROCESS] Batch size exceeded max of %d, current size is %d", batchSize, len(collectingResponses.responses))
+			if len(collectingResponses.responses) >= batchSize {
 				shouldProcess = true
 			} else if batchTimer == nil {
 				// We'll start the timer after unlocking.
@@ -172,7 +167,7 @@ func StartBatchingProcess() {
 			if shouldProcess {
 				handleBatch()
 			} else if batchTimer == nil {
-				log.Info("[BATCH_PROCESS] StartBatchingProcess Starting timer")
+				log.Debug("[BATCH_PROCESS] StartBatchingProcess Starting timer")
 				batchTimer = time.AfterFunc(timeWindow, handleBatch)
 			}
 		}
@@ -230,7 +225,7 @@ func MerkleAnsResponseHandler(d *DNSContext, err error) {
 	log.Debug("[BATCH_PROCESS] Response time. Start: %d, End: %d, Delta: %d\n", responseTime.UnixNano(), responseEnd.UnixNano(), responseEnd.Sub(responseTime))
 	if responseEnd.Sub(responseTime) > longestTime {
 		longestTime = responseEnd.Sub(responseTime)
-		log.Info("[BATCH_PROCESS] Longest response time so far: %d\n", longestTime)
+		log.Debug("[BATCH_PROCESS] Longest response time so far: %d\n", longestTime)
 	}
 }
 
@@ -244,9 +239,9 @@ func swapBuffers() {
 
 func processBatch() {
 	batchId := time.Now().UnixNano()
-	log.Info("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
+	log.Debug("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
 	processingMutex.Lock()
-	log.Info("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
+	log.Debug("[BATCH_PROCESS] Processing batch %d... processing mutex locked", batchId)
 	defer processingMutex.Unlock()
 	var contents []merkletree.Content
 	for _, waitingRes := range processingResponses.responses {
@@ -269,7 +264,7 @@ func processBatch() {
 		return
 	}
 	// log batch size
-	log.Info("[BATCH_PROCESS] Batch size: %d\n", len(processingResponses.responses))
+	log.Debug("[BATCH_PROCESS] Batch size: %d\n", len(processingResponses.responses))
 	// Notify all waiting responses of the batch size
 	for _, waitingRes := range processingResponses.responses {
 		if waitingRes.processed {
@@ -315,7 +310,7 @@ func processBatch() {
 		close(waitingRes.notifyCh)
 	}
 	processingResponses.responses = processingResponses.responses[:0]
-	log.Info("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
+	log.Debug("[BATCH_PROCESS] Batch %d processed, mutex unlocked", batchId)
 }
 
 func CreateTxtRecordsForPackedData(domain string, packedData []string) []dns.RR {
@@ -387,7 +382,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 		return
 	}
 
-	// 4. Verify the signature (Assuming you have a verifySignature function ready)
+	// 4. Verify the signature
 	if !verifySignature(calculatedMerkleRoot, []byte(signature)) {
 		log.Error("Signature verification failed")
 		return
@@ -463,21 +458,34 @@ func ExtractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 }
 
 func verifySignature(hash []byte, signature []byte) bool {
+	// check the cache for the signature
+	var hashArray [32]byte
+	copy(hashArray[:], hash)
+
+	key := cacheKey{
+		Hash:      hashArray,
+		Signature: string(signature),
+	}
+
+	// Check the cache first
+	if result, found := signatureCache.Load(key); found {
+		return result.(bool)
+	}
+
 	// Compute the SHA-256 hash of the data
 
 	var rs ECDSASignature
 	// Unmarshal the ASN.1 DER encoded signature
 	if _, err := asn1.Unmarshal(signature, &rs); err != nil {
 		log.Error("Failed to unmarshal signature: %s", err)
+		signatureCache.Store(key, false)
 		return false
 	}
 
 	// Verify the signature
-	if ecdsa.Verify(publicKeyMerkle, hash[:], rs.R, rs.S) {
-		return true
-	}
-
-	return false
+	verificationResult := ecdsa.Verify(publicKeyMerkle, hash[:], rs.R, rs.S)
+	signatureCache.Store(key, verificationResult)
+	return verificationResult
 }
 
 func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
@@ -504,7 +512,7 @@ func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
 	}
 
 	log.Error("Failed to decode PEM block containing private key from '%s'", filename)
-	return nil, errors.New("Failed to decode PEM block containing private key")
+	return nil, fmt.Errorf("failed to decode PEM block containing private key")
 }
 
 func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
@@ -530,7 +538,7 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 			publicKey, ok := pubInterface.(*ecdsa.PublicKey)
 			if !ok {
 				log.Error("Failed to assert public key from '%s' as ECDSA public key", filename)
-				return nil, errors.New("Failed to assert as ECDSA public key")
+				return nil, fmt.Errorf("failed to assert as ECDSA public key")
 			}
 
 			return publicKey, nil
@@ -538,7 +546,7 @@ func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 	}
 
 	log.Error("Failed to decode PEM block containing public key from '%s'", filename)
-	return nil, errors.New("Failed to decode PEM block containing public key")
+	return nil, fmt.Errorf("failed to decode PEM block containing public key")
 }
 
 func createSignature(hash []byte) ([]byte, error) {
@@ -640,7 +648,7 @@ func (dres *DNSResponse) CalculateHash() ([]byte, error) {
 func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 	otherContent, ok := other.(*DNSResponse)
 	if !ok {
-		return false, errors.New("value is not of type DNSResponse")
+		return false, fmt.Errorf("value is not of type DNSResponse")
 	}
 
 	var err error
@@ -700,12 +708,12 @@ func DeserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 
 	// Subsequent records are for the hashes
 	for _, record := range records[1:] {
-		var hash []byte
+		var recordHash []byte
 		hashDecoder := gob.NewDecoder(bytes.NewBuffer(record))
-		if err := hashDecoder.Decode(&hash); err != nil {
+		if err := hashDecoder.Decode(&recordHash); err != nil {
 			return nil, nil, fmt.Errorf("error deserializing Merkle path: %s", err)
 		}
-		path = append(path, hash)
+		path = append(path, recordHash)
 	}
 
 	return path, indexes, nil

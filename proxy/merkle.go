@@ -26,7 +26,7 @@ type ECDSASignature struct {
 	R, S *big.Int
 }
 
-// Build a new response DNSResponse struct that stores DNSContext as well as the salt and hash
+// DNSResponse Build a new response struct that stores DNSContext as well as the salt and hash
 type DNSResponse struct {
 	DNSContext *DNSContext // salt of 256 bits
 	Salt       []byte
@@ -258,7 +258,7 @@ func processBatch() {
 	}
 
 	// Sign the Merkle root
-	proof.Signature, err = createSignature([]byte(tree.MerkleRoot()))
+	proof.Signature, err = createSignature(tree.MerkleRoot())
 	if err != nil {
 		log.Error("error signing merkle root: %s", err)
 		return
@@ -383,7 +383,7 @@ func MerkleRrResponseHandler(d *DNSContext, err error) {
 	}
 
 	// 4. Verify the signature
-	if !verifySignature(calculatedMerkleRoot, []byte(signature)) {
+	if !verifySignature(calculatedMerkleRoot, signature) {
 		log.Error("Signature verification failed")
 		return
 	} else {
@@ -459,11 +459,8 @@ func ExtractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 
 func verifySignature(hash []byte, signature []byte) bool {
 	// check the cache for the signature
-	var hashArray [32]byte
-	copy(hashArray[:], hash)
-
 	key := cacheKey{
-		Hash:      hashArray,
+		Hash:      [32]byte(hash),
 		Signature: string(signature),
 	}
 
@@ -483,7 +480,7 @@ func verifySignature(hash []byte, signature []byte) bool {
 	}
 
 	// Verify the signature
-	verificationResult := ecdsa.Verify(publicKeyMerkle, hash[:], rs.R, rs.S)
+	verificationResult := ecdsa.Verify(publicKeyMerkle, hash, rs.R, rs.S)
 	signatureCache.Store(key, verificationResult)
 	return verificationResult
 }

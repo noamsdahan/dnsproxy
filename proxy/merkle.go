@@ -554,31 +554,48 @@ func LoadECDSAPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 func LoadRSAPrivateKeyFromFile(filename string) (*rsa.PrivateKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading private key file '%s': %v", filename, err)
 	}
 
 	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		return nil, fmt.Errorf("failed to decode PEM block containing RSA private key")
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block containing private key")
 	}
 
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+	// Try to parse PKCS1 first
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err == nil {
+		return privateKey, nil
+	}
+
+	// Try to parse PKCS8 if PKCS1 parsing fails
+	privateKeyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err == nil {
+		privateKey, ok := privateKeyInterface.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("not an RSA private key")
+		}
+		return privateKey, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse RSA private key")
 }
 
+// LoadRSAPublicKeyFromFile loads an RSA public key from a file.
 func LoadRSAPublicKeyFromFile(filename string) (*rsa.PublicKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error reading public key file '%s': %v", filename, err)
 	}
 
 	block, _ := pem.Decode(pemBytes)
 	if block == nil || block.Type != "PUBLIC KEY" {
-		return nil, fmt.Errorf("failed to decode PEM block containing RSA public key")
+		return nil, fmt.Errorf("failed to decode PEM block containing public key")
 	}
 
 	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error parsing PKIX public key: %v", err)
 	}
 
 	pubKey, ok := pubInterface.(*rsa.PublicKey)

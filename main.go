@@ -201,8 +201,11 @@ type Options struct {
 	// TimeWindow defines the time window sizes for the Merkle tree
 	TimeWindow string `yaml:"time-window" long:"time-window" description:"Set the time window size for the Merkle tree" default:"120ms"`
 
-	// useRSA defines whether the RSA signature is used for the Merkle tree
+	// UseRSA defines whether the RSA signature is used for the Merkle tree
 	UseRSA bool `yaml:"use-rsa" long:"use-rsa" description:"If present, the RSA signature is used for the Merkle tree. Otherwise, ECDSA is used" optional:"yes" optional-value:"true"`
+
+	// UseMerkleCaching defines whether the resolver should cache Merkle Tree signatures
+	UseMerkleCaching bool `yaml:"use-merkle-caching" long:"use-merkle-caching" description:"If present, the resolver should cache Merkle Tree signatures" optional:"yes" optional-value:"true"`
 
 	// Print DNSProxy version (just for the help)
 	Version bool `yaml:"version" long:"version" description:"Prints the program version"`
@@ -297,6 +300,7 @@ func run(options *Options) {
 	} else if options.MerkleRR {
 		dnsProxy.ResponseHandler = proxy.MerkleRrResponseHandler
 		proxy.UseRSA = options.UseRSA
+		proxy.UseMerkleCaching = options.UseMerkleCaching
 	}
 	// Start the proxy server.
 	err := dnsProxy.Start()

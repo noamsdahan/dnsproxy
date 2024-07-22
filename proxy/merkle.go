@@ -82,6 +82,7 @@ type cacheKey struct {
 	Signature string
 }
 
+var UseMerkleCaching bool
 var batchSize int
 var timeWindow time.Duration
 var UseRSA bool
@@ -489,15 +490,17 @@ func ExtractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 }
 
 func verifySignature(hash []byte, signature []byte) bool {
-	key := cacheKey{
-		Hash:      [32]byte(hash),
-		Signature: string(signature),
-	}
+	var key cacheKey
+	if UseMerkleCaching {
+		key = cacheKey{
+			Hash:      [32]byte(hash),
+			Signature: string(signature),
+		}
 
-	if result, found := signatureCache.Load(key); found {
-		return result.(bool)
+		if result, found := signatureCache.Load(key); found {
+			return result.(bool)
+		}
 	}
-
 	var verificationResult bool
 	if UseRSA {
 		if publicKeyRSA == nil {
@@ -519,8 +522,9 @@ func verifySignature(hash []byte, signature []byte) bool {
 		}
 		verificationResult = ecdsa.Verify(publicKeyMerkle, hash, rs.R, rs.S)
 	}
-
-	signatureCache.Store(key, verificationResult)
+	if UseMerkleCaching {
+		signatureCache.Store(key, verificationResult)
+	}
 	return verificationResult
 }
 

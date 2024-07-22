@@ -531,39 +531,62 @@ func verifySignature(hash []byte, signature []byte) bool {
 func LoadECDSAPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
+		log.Error("Error reading private key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
 
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "EC PRIVATE KEY" {
-		return nil, fmt.Errorf("failed to decode PEM block containing ECDSA private key")
+	var block *pem.Block
+	for {
+		block, pemBytes = pem.Decode(pemBytes)
+		if block == nil {
+			break
+		}
+		if block.Type == "EC PRIVATE KEY" {
+			privateKey, err := x509.ParseECPrivateKey(block.Bytes)
+			if err != nil {
+				log.Error("Error parsing EC private key from '%s'. Error: %v", filename, err)
+				return nil, err
+			}
+			return privateKey, nil
+		}
 	}
 
-	return x509.ParseECPrivateKey(block.Bytes)
+	log.Error("Failed to decode PEM block containing private key from '%s'", filename)
+	return nil, fmt.Errorf("Failed to decode PEM block containing private key")
 }
 
 func LoadECDSAPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
+		log.Error("Error reading public key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
 
-	block, _ := pem.Decode(pemBytes)
-	if block == nil || block.Type != "PUBLIC KEY" {
-		return nil, fmt.Errorf("failed to decode PEM block containing ECDSA public key")
+	var block *pem.Block
+	for {
+		block, pemBytes = pem.Decode(pemBytes)
+		if block == nil {
+			break
+		}
+		if block.Type == "PUBLIC KEY" {
+			pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+			if err != nil {
+				log.Error("Error parsing PKIX public key from '%s'. Error: %v", filename, err)
+				return nil, err
+			}
+
+			publicKey, ok := pubInterface.(*ecdsa.PublicKey)
+			if !ok {
+				log.Error("Failed to assert public key from '%s' as ECDSA public key", filename)
+				return nil, fmt.Errorf("failed to assert as ECDSA public key")
+			}
+
+			return publicKey, nil
+		}
 	}
 
-	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
-	pubKey, ok := pubInterface.(*ecdsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("not an ECDSA public key")
-	}
-
-	return pubKey, nil
+	log.Error("Failed to decode PEM block containing public key from '%s'", filename)
+	return nil, fmt.Errorf("failed to decode PEM block containing public key")
 }
 
 func LoadRSAPrivateKeyFromFile(filename string) (*rsa.PrivateKey, error) {

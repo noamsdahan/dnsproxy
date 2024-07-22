@@ -195,6 +195,15 @@ type Options struct {
 	//MerkleRR defines whether the merkle tree recursive resolver behavior is enabled or not.
 	MerkleRR bool `yaml:"merkle-rr" long:"merkle-rr" description:"If present, dnsproxy will act as a merkle tree recursive resolver." optional:"yes" optional-value:"true"`
 
+	// BatchSize defines the size of the batch for the Merkle tree
+	BatchSize int `yaml:"batch-size" long:"batch-size" description:"Set the size of the batch for the Merkle tree" default:"1024"`
+
+	// TimeWindow defines the time window sizes for the Merkle tree
+	TimeWindow string `yaml:"time-window" long:"time-window" description:"Set the time window size for the Merkle tree" default:"120ms"`
+
+	// useRSA defines whether the RSA signature is used for the Merkle tree
+	UseRSA bool `yaml:"use-rsa" long:"use-rsa" description:"If present, the RSA signature is used for the Merkle tree. Otherwise, ECDSA is used" optional:"yes" optional-value:"true"`
+
 	// Print DNSProxy version (just for the help)
 	Version bool `yaml:"version" long:"version" description:"Prints the program version"`
 }
@@ -277,7 +286,14 @@ func run(options *Options) {
 	}
 	if options.MerkleANS {
 		dnsProxy.ResponseHandler = proxy.MerkleAnsResponseHandler
-		proxy.StartBatchingProcess()
+		timeWindowDuration, err := time.ParseDuration(options.TimeWindow)
+		if err != nil {
+			log.Fatalf("cannot parse time window duration, ensure parseable duration such as 120ms: %s", err)
+		}
+		proxy.StartBatchingProcess(
+			options.BatchSize,
+			timeWindowDuration,
+			options.UseRSA)
 	} else if options.MerkleRR {
 		dnsProxy.ResponseHandler = proxy.MerkleRrResponseHandler
 	}

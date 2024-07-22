@@ -61,7 +61,6 @@ var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
 var privateKeyRSA *rsa.PrivateKey
 var publicKeyRSA *rsa.PublicKey
-var useRSA = true
 
 var responsesReceived = 0
 var responsesProcessed = 0
@@ -83,12 +82,14 @@ type cacheKey struct {
 	Signature string
 }
 
+var batchSize int
+var timeWindow time.Duration
+var useRSA bool
+
 const (
 	safetyFactor          = 2
-	batchSize             = 1024
 	txtRecordTTL          = 60
 	NotificationProcessed = 0
-	timeWindow            = 100 * time.Millisecond
 	maxEncodedLength      = 255
 	maxDnsUdpSize         = 4096
 	saltBits              = 128
@@ -163,7 +164,13 @@ func handleBatch() {
 // 2. Starts a timer that triggers the processing of the batch.
 // 3. When a request is received, it is added to the batch.
 // 4. When the timer expires, it processes the batch.
-func StartBatchingProcess() {
+func StartBatchingProcess(
+	_batchSize int,
+	_timeWindow time.Duration,
+	_useRSA bool) {
+	timeWindow = _timeWindow
+	batchSize = _batchSize
+	useRSA = _useRSA
 	go func() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {

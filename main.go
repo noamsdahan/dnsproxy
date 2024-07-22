@@ -296,6 +296,7 @@ func run(options *Options) {
 			options.UseRSA)
 	} else if options.MerkleRR {
 		dnsProxy.ResponseHandler = proxy.MerkleRrResponseHandler
+		proxy.UseRSA = options.UseRSA
 	}
 	// Start the proxy server.
 	err := dnsProxy.Start()

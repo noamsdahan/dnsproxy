@@ -84,7 +84,7 @@ type cacheKey struct {
 
 var batchSize int
 var timeWindow time.Duration
-var useRSA bool
+var UseRSA bool
 
 const (
 	safetyFactor          = 2
@@ -170,7 +170,7 @@ func StartBatchingProcess(
 	_useRSA bool) {
 	timeWindow = _timeWindow
 	batchSize = _batchSize
-	useRSA = _useRSA
+	UseRSA = _useRSA
 	go func() {
 		log.Debug("[BATCH_PROCESS] Starting batching process...")
 		for {
@@ -495,7 +495,7 @@ func verifySignature(hash []byte, signature []byte) bool {
 	}
 
 	var verificationResult bool
-	if useRSA {
+	if UseRSA {
 		if publicKeyRSA == nil {
 			log.Error("RSA public key is nil")
 			return false
@@ -614,7 +614,7 @@ func LoadRSAPublicKeyFromFile(filename string) (*rsa.PublicKey, error) {
 }
 
 func createSignature(hash []byte) ([]byte, error) {
-	if useRSA {
+	if UseRSA {
 		if privateKeyRSA == nil {
 			log.Error("RSA private key is nil")
 			panic("RSA private key is nil")

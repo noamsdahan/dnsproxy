@@ -779,12 +779,12 @@ func DeserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 func PackStringsForTxtRecord(strs []string) []string {
 	result := make([]string, 0)
 	buffer := ""
-
 	for _, str := range strs {
 		remainingLength := maxEncodedLength - len(buffer)
 		for len(buffer) > maxEncodedLength {
 			result = append(result, buffer[:maxEncodedLength])
 			buffer = buffer[maxEncodedLength:]
+			remainingLength = maxEncodedLength - len(buffer)
 		}
 
 		if len(str) <= remainingLength {

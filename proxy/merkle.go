@@ -782,6 +782,11 @@ func PackStringsForTxtRecord(strs []string) []string {
 
 	for _, str := range strs {
 		remainingLength := maxEncodedLength - len(buffer)
+		for len(buffer) > maxEncodedLength {
+			result = append(result, buffer[:maxEncodedLength])
+			buffer = buffer[maxEncodedLength:]
+		}
+
 		if len(str) <= remainingLength {
 			buffer += str
 		} else {

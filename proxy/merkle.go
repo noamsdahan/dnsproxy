@@ -275,6 +275,10 @@ func processBatch() {
 		contents = append(contents, waitingRes.response)
 		log.Debug("[BATCH_PROCESS] Processing response: %s\n", waitingRes.response.DNSContext.Req.Question[0].Name)
 	}
+	if len(contents) == 0 {
+		log.Debug("[BATCH_PROCESS] No responses in batch, mutex unlocked")
+		return
+	}
 	proof := &MerkleProof{}
 	// log length of contents
 	log.Debug("[BATCH_PROCESS] Total responses in batch: %d\n", len(contents))

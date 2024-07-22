@@ -613,8 +613,7 @@ func createSignature(hash []byte) ([]byte, error) {
 			panic("RSA private key is nil")
 		}
 		// Use SHA256 hash for RSA signing
-		hashed := sha256.Sum256(hash)
-		return rsa.SignPKCS1v15(rand.Reader, privateKeyRSA, crypto.SHA256, hashed[:])
+		return rsa.SignPKCS1v15(rand.Reader, privateKeyRSA, crypto.SHA256, hash)
 	} else {
 		if privateKeyMerkle == nil {
 			log.Error("ECDSA private key is nil")

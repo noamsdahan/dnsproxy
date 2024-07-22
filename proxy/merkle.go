@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
@@ -57,6 +59,10 @@ type MerkleProofB64 struct {
 // Assuming you have the private key and public key for ecdsa
 var privateKeyMerkle *ecdsa.PrivateKey
 var publicKeyMerkle *ecdsa.PublicKey
+var privateKeyRSA *rsa.PrivateKey
+var publicKeyRSA *rsa.PublicKey
+var useRSA = true
+
 var responsesReceived = 0
 var responsesProcessed = 0
 var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor)
@@ -93,7 +99,7 @@ func init() {
 	var err error
 
 	// Attempt to load private key from file.
-	privateKeyMerkle, err = LoadPrivateKeyFromFile("private.pem")
+	privateKeyMerkle, err = LoadECDSAPrivateKeyFromFile("private.pem")
 	if err != nil {
 		log.Info("Failed to load private key from file. Error: %v", err)
 	} else {
@@ -101,7 +107,7 @@ func init() {
 	}
 
 	// Attempt to load public key from file.
-	publicKeyMerkle, err = LoadPublicKeyFromFile("public.pem")
+	publicKeyMerkle, err = LoadECDSAPublicKeyFromFile("public.pem")
 	if err != nil {
 		log.Error("Failed to load public key from file. Error: %v", err)
 		// If private key is loaded successfully, use its public part.
@@ -111,6 +117,20 @@ func init() {
 		}
 	} else {
 		log.Info("Successfully loaded public key from file.")
+	}
+	// Attempt to load private RSA key from file.
+	privateKeyRSA, err = LoadRSAPrivateKeyFromFile("rsa_private.pem")
+	if err != nil {
+		log.Info("Failed to load RSA private key from file. Error: %v", err)
+	} else {
+		log.Info("Successfully loaded RSA private key from file.")
+	}
+	// Attempt to load public RSA key from file.
+	publicKeyRSA, err = LoadRSAPublicKeyFromFile("rsa_public.pem")
+	if err != nil {
+		log.Error("Failed to load RSA public key from file. Error: %v", err)
+	} else {
+		log.Info("Successfully loaded RSA public key from file.")
 	}
 
 }
@@ -458,115 +478,138 @@ func ExtractTXTData(extra []dns.RR) ([]byte, []byte, [][]byte, error) {
 }
 
 func verifySignature(hash []byte, signature []byte) bool {
-	// check the cache for the signature
 	key := cacheKey{
 		Hash:      [32]byte(hash),
 		Signature: string(signature),
 	}
 
-	// Check the cache first
 	if result, found := signatureCache.Load(key); found {
 		return result.(bool)
 	}
 
-	// Compute the SHA-256 hash of the data
-
-	var rs ECDSASignature
-	// Unmarshal the ASN.1 DER encoded signature
-	if _, err := asn1.Unmarshal(signature, &rs); err != nil {
-		log.Error("Failed to unmarshal signature: %s", err)
-		signatureCache.Store(key, false)
-		return false
+	var verificationResult bool
+	if useRSA {
+		if publicKeyRSA == nil {
+			log.Error("RSA public key is nil")
+			return false
+		}
+		err := rsa.VerifyPKCS1v15(publicKeyRSA, crypto.SHA256, hash, signature)
+		verificationResult = err == nil
+	} else {
+		if publicKeyMerkle == nil {
+			log.Error("ECDSA public key is nil")
+			return false
+		}
+		var rs ECDSASignature
+		_, err := asn1.Unmarshal(signature, &rs)
+		if err != nil {
+			log.Error("Failed to unmarshal ECDSA signature: %s", err)
+			return false
+		}
+		verificationResult = ecdsa.Verify(publicKeyMerkle, hash, rs.R, rs.S)
 	}
 
-	// Verify the signature
-	verificationResult := ecdsa.Verify(publicKeyMerkle, hash, rs.R, rs.S)
 	signatureCache.Store(key, verificationResult)
 	return verificationResult
 }
 
-func LoadPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
+func LoadECDSAPrivateKeyFromFile(filename string) (*ecdsa.PrivateKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
-		log.Error("Error reading private key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
 
-	var block *pem.Block
-	for {
-		block, pemBytes = pem.Decode(pemBytes)
-		if block == nil {
-			break
-		}
-		if block.Type == "EC PRIVATE KEY" {
-			privateKey, err := x509.ParseECPrivateKey(block.Bytes)
-			if err != nil {
-				log.Error("Error parsing EC private key from '%s'. Error: %v", filename, err)
-				return nil, err
-			}
-			return privateKey, nil
-		}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "EC PRIVATE KEY" {
+		return nil, fmt.Errorf("failed to decode PEM block containing ECDSA private key")
 	}
 
-	log.Error("Failed to decode PEM block containing private key from '%s'", filename)
-	return nil, fmt.Errorf("failed to decode PEM block containing private key")
+	return x509.ParseECPrivateKey(block.Bytes)
 }
 
-func LoadPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
+func LoadECDSAPublicKeyFromFile(filename string) (*ecdsa.PublicKey, error) {
 	pemBytes, err := os.ReadFile(filename)
 	if err != nil {
-		log.Error("Error reading public key file '%s'. Error: %v", filename, err)
 		return nil, err
 	}
 
-	var block *pem.Block
-	for {
-		block, pemBytes = pem.Decode(pemBytes)
-		if block == nil {
-			break
-		}
-		if block.Type == "PUBLIC KEY" {
-			pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
-			if err != nil {
-				log.Error("Error parsing PKIX public key from '%s'. Error: %v", filename, err)
-				return nil, err
-			}
-
-			publicKey, ok := pubInterface.(*ecdsa.PublicKey)
-			if !ok {
-				log.Error("Failed to assert public key from '%s' as ECDSA public key", filename)
-				return nil, fmt.Errorf("failed to assert as ECDSA public key")
-			}
-
-			return publicKey, nil
-		}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("failed to decode PEM block containing ECDSA public key")
 	}
 
-	log.Error("Failed to decode PEM block containing public key from '%s'", filename)
-	return nil, fmt.Errorf("failed to decode PEM block containing public key")
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	pubKey, ok := pubInterface.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an ECDSA public key")
+	}
+
+	return pubKey, nil
+}
+
+func LoadRSAPrivateKeyFromFile(filename string) (*rsa.PrivateKey, error) {
+	pemBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		return nil, fmt.Errorf("failed to decode PEM block containing RSA private key")
+	}
+
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+func LoadRSAPublicKeyFromFile(filename string) (*rsa.PublicKey, error) {
+	pemBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	block, _ := pem.Decode(pemBytes)
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("failed to decode PEM block containing RSA public key")
+	}
+
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	pubKey, ok := pubInterface.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA public key")
+	}
+
+	return pubKey, nil
 }
 
 func createSignature(hash []byte) ([]byte, error) {
-	// check to ensure that the private key is not nil
-	if privateKeyMerkle == nil {
-		// if it is, log error and panic
-		log.Error("Private key is nil")
-		panic("Private key is nil")
+	if useRSA {
+		if privateKeyRSA == nil {
+			log.Error("RSA private key is nil")
+			panic("RSA private key is nil")
+		}
+		// Use SHA256 hash for RSA signing
+		hashed := sha256.Sum256(hash)
+		return rsa.SignPKCS1v15(rand.Reader, privateKeyRSA, crypto.SHA256, hashed[:])
+	} else {
+		if privateKeyMerkle == nil {
+			log.Error("ECDSA private key is nil")
+			panic("ECDSA private key is nil")
+		}
+		r, s, err := ecdsa.Sign(rand.Reader, privateKeyMerkle, hash)
+		if err != nil {
+			return nil, err
+		}
+		sig := ECDSASignature{R: r, S: s}
+		return asn1.Marshal(sig)
 	}
-	// Sign the data
-	r, s, err := ecdsa.Sign(rand.Reader, privateKeyMerkle, hash[:])
-	if err != nil {
-		return nil, err
-	}
-
-	// Marshal the signature to ASN.1 DER format
-	sig := ECDSASignature{R: r, S: s}
-	sigASN1, err := asn1.Marshal(sig)
-	if err != nil {
-		return nil, err
-	}
-
-	return sigASN1, nil
 }
 
 func calculateMerkleRoot(dres *DNSResponse, merklePath [][]byte, indexes []int64, knownRootHashSignature []byte, hashStrategy func() hash.Hash) ([]byte, error) {

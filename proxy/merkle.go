@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/base64"
-	"encoding/gob"
 	"encoding/pem"
 	"fmt"
 	"github.com/AdguardTeam/golibs/log"
@@ -765,49 +764,58 @@ func (dres *DNSResponse) Equals(other merkletree.Content) (bool, error) {
 	return bytes.Equal(dres.Hash, otherContent.Hash), nil
 }
 
+// SerializePathAndIndexes serializes the Merkle path and indexes to a slice of byte slices.
 func SerializePathAndIndexes(path [][]byte, indexes []int64) ([][]byte, error) {
 	serializedData := make([][]byte, len(path)+1)
 
-	buf := new(bytes.Buffer)
-	encoder := gob.NewEncoder(buf)
-
-	// 1. Serialize indexes
-	if err := encoder.Encode(indexes); err != nil {
-		return nil, err
+	// Serialize indexes
+	if len(indexes) > 16 {
+		return nil, fmt.Errorf("too many indexes, maximum is 16")
 	}
-	serializedData[0] = append(serializedData[0], buf.Bytes()...)
-	buf.Reset()
 
-	// 2. Serialize each individual hash in the path
-	for i, stepHash := range path {
-		if err := encoder.Encode(stepHash); err != nil {
-			return nil, err
+	var indexBytes [2]byte
+	for i, index := range indexes {
+		if index != 0 && index != 1 {
+			return nil, fmt.Errorf("invalid index value, must be 0 or 1")
 		}
-		serializedData[i+1] = append(serializedData[i+1], buf.Bytes()...)
-		buf.Reset()
+		if index == 1 {
+			if i < 8 {
+				indexBytes[0] |= 1 << i
+			} else {
+				indexBytes[1] |= 1 << (i - 8)
+			}
+		}
+	}
+	serializedData[0] = indexBytes[:]
+
+	// Serialize each individual hash in the path
+	for i, stepHash := range path {
+		serializedData[i+1] = stepHash
 	}
 
 	return serializedData, nil
 }
 
+// DeserializeMerkleData deserializes the Merkle data from a slice of byte slices.
 func DeserializeMerkleData(records [][]byte) ([][]byte, []int64, error) {
 	var path [][]byte
 	var indexes []int64
 
 	// First record is for indexes
-	indexDecoder := gob.NewDecoder(bytes.NewBuffer(records[0]))
-	if err := indexDecoder.Decode(&indexes); err != nil {
-		return nil, nil, fmt.Errorf("error deserializing Merkle indexes: %s", err)
+	if len(records[0]) != 2 {
+		return nil, nil, fmt.Errorf("invalid index data length")
+	}
+	indexBytes := records[0]
+	for i := 0; i < 8; i++ {
+		indexes = append(indexes, int64((indexBytes[0]>>i)&1))
+	}
+	for i := 0; i < 8; i++ {
+		indexes = append(indexes, int64((indexBytes[1]>>i)&1))
 	}
 
 	// Subsequent records are for the hashes
 	for _, record := range records[1:] {
-		var recordHash []byte
-		hashDecoder := gob.NewDecoder(bytes.NewBuffer(record))
-		if err := hashDecoder.Decode(&recordHash); err != nil {
-			return nil, nil, fmt.Errorf("error deserializing Merkle path: %s", err)
-		}
-		path = append(path, recordHash)
+		path = append(path, record)
 	}
 
 	return path, indexes, nil

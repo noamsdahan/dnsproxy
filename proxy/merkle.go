@@ -63,15 +63,15 @@ var publicKeyRSA *rsa.PublicKey
 
 var responsesReceived = 0
 var responsesProcessed = 0
-var batchedResponsesCh = make(chan WaitingResponse, batchSize*safetyFactor)
+var batchedResponsesCh = make(chan WaitingResponse, max(batchSize*safetyFactor, minBufferSize))
 var collectingMutex sync.Mutex
 var processingMutex sync.Mutex
 var batchTimer *time.Timer
 var collectingResponses = &BatchedResponses{
-	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
+	responses: make([]WaitingResponse, 0, max(batchSize*safetyFactor, minBufferSize)), // initial capacity for better performance
 }
 var processingResponses = &BatchedResponses{
-	responses: make([]WaitingResponse, 0, batchSize*safetyFactor), // initial capacity for better performance
+	responses: make([]WaitingResponse, 0, max(batchSize*safetyFactor, minBufferSize)), // initial capacity for better performance
 }
 var longestTime = 0 * time.Millisecond
 var signatureCache = sync.Map{}
@@ -94,6 +94,7 @@ const (
 	maxDnsUdpSize         = 4096
 	saltBits              = 128
 	maxUdpSizeCheck       = true
+	minBufferSize         = 1024
 )
 
 func init() {

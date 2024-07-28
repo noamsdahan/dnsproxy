@@ -260,10 +260,14 @@ func swapBuffers() {
 	// No locks in here
 
 	// Swap the buffers
-	collectingResponses, processingResponses = processingResponses, collectingResponses
-	collectingResponses.responses = collectingResponses.responses[:0]
+	if len(collectingResponses.responses) > batchSize {
+		processingResponses.responses = append(processingResponses.responses, collectingResponses.responses[:batchSize]...)
+		collectingResponses.responses = collectingResponses.responses[batchSize:]
+	} else {
+		processingResponses, collectingResponses = collectingResponses, processingResponses
+		collectingResponses.responses = collectingResponses.responses[:0]
+	}
 }
-
 func processBatch() {
 	batchId := time.Now().UnixNano()
 	log.Debug("[BATCH_PROCESS] Processing batch %d... attempting to lock processing mutex", batchId)
@@ -497,6 +501,7 @@ func verifySignature(hash []byte, signature []byte) bool {
 		}
 
 		if result, found := signatureCache.Load(key); found {
+			log.Debug("Signature verification of hash %x found in cache", hash)
 			return result.(bool)
 		}
 	}
